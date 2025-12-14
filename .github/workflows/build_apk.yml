@@ -1,0 +1,52 @@
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # 手動実行も許可
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flet
+          # flet build コマンドを使うために flet-cli も必要になる場合がありますが
+          # 通常 flet パッケージに含まれています。
+          # 追加の依存関係があれば requirements.txt からインストール
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.29.0' # 安定版を指定
+          channel: 'stable'
+
+      - name: Build APK
+        run: |
+          # app.py が src ディレクトリにある場合、そこに移動してからビルド
+          cd src
+          
+          # flet build apk コマンドでビルド
+          # --module-name でエントリーポイントを指定
+          flet build apk --module-name app --verbose
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release.apk
+          # ビルド成果物のパスも変更されるため修正
+          # src ディレクトリでビルドした場合、通常はその中の build/apk に生成される
+          path: src/build/apk/app-release.apk
