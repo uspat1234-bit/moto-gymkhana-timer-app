@@ -35,20 +35,37 @@ class GymkhanaApp:
         page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
         page.bgcolor = "#1a1a1a" # ダークモード
         page.padding = 20
+        # スマホ横向き対応: スクロール可能にする
+        page.scroll = ft.ScrollMode.AUTO
 
         # --- UIパーツ ---
         
-        # 接続情報表示エリア
+        # 接続情報表示エリア (横長レイアウトに変更)
         wifi_info = ft.Container(
-            content=ft.Column([
-                ft.Text("テザリング設定情報", size=14, color="grey400", weight=ft.FontWeight.BOLD),
-                ft.Text("SSID: motogym", size=18, color="white", weight=ft.FontWeight.BOLD),
-                ft.Text("PASS: 12345678", size=18, color="white", weight=ft.FontWeight.BOLD),
-            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-            padding=15,
+            content=ft.Row([
+                ft.Text("テザリング設定: ", size=14, color="grey400", weight=ft.FontWeight.BOLD),
+                ft.Text("SSID: motogym", size=16, color="white", weight=ft.FontWeight.BOLD),
+                ft.Container(width=20), # スペーサー
+                ft.Text("PASS: 12345678", size=16, color="white", weight=ft.FontWeight.BOLD),
+            ], 
+            alignment=ft.MainAxisAlignment.CENTER,
+            wrap=True # 画面幅が狭いときは折り返す
+            ),
+            padding=10,
             border=ft.border.all(1, "grey800"),
             border_radius=10,
             margin=ft.margin.only(bottom=20)
+        )
+
+        # ボタン（手動リセット用）
+        # レイアウト順序のため先に定義
+        btn_reset = ft.ElevatedButton(
+            text="RESET",
+            color="white",
+            bgcolor="red900",
+            on_click=self.reset_timer,
+            height=45, # 高さをセンサー表示に合わせて調整
+            width=100
         )
 
         # センサー状態表示エリア
@@ -70,34 +87,34 @@ class GymkhanaApp:
             alignment=ft.alignment.center
         )
 
+        # センサー状態とリセットボタンを横並びに
         sensor_row = ft.Row(
-            [self.start_sensor_status, self.stop_sensor_status],
+            [
+                self.start_sensor_status, 
+                self.stop_sensor_status,
+                btn_reset
+            ],
             alignment=ft.MainAxisAlignment.CENTER,
-            spacing=20
+            spacing=15,
+            wrap=True # 横幅が狭いときは縦に並ぶようにする
         )
 
         # タイム表示（巨大文字）
         self.time_display = ft.Text(
             value="0.000",
-            size=80,
+            size=80, # スマホで見やすいサイズ
             color="yellow",
             font_family="monospace", # 等幅フォント
-            weight=ft.FontWeight.BOLD
+            weight=ft.FontWeight.BOLD,
+            text_align=ft.TextAlign.CENTER
         )
 
         # ステータス表示
         self.status_text = ft.Text(
             value="WAITING FOR SIGNAL...",
             size=20,
-            color="grey400"
-        )
-
-        # ボタン（手動リセット用）
-        btn_reset = ft.ElevatedButton(
-            text="RESET",
-            color="white",
-            bgcolor="red900",
-            on_click=self.reset_timer
+            color="grey400",
+            text_align=ft.TextAlign.CENTER
         )
 
         # 画面に追加
@@ -105,15 +122,15 @@ class GymkhanaApp:
             ft.Column(
                 [
                     wifi_info,     # 追加: テザリング情報
-                    sensor_row,    # 追加: センサー状態
+                    sensor_row,    # 追加: センサー状態 + リセットボタン
                     ft.Container(height=30),
                     self.status_text,
                     self.time_display,
-                    ft.Container(height=50),
-                    btn_reset
+                    ft.Container(height=20),
                 ],
                 alignment=ft.MainAxisAlignment.CENTER,
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                spacing=10
             )
         )
 
