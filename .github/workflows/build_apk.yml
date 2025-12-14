@@ -2,9 +2,14 @@ name: Build Android APK
 
 on:
   push:
-    branches:
-      - main
+    # branches:  # ブランチ指定をコメントアウトまたは削除
+    #   - main
+    tags: # v* のタグがプッシュされたときに実行
+      - 'v*'
   workflow_dispatch: # 手動実行も許可
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -43,10 +48,18 @@ jobs:
           # --module-name でエントリーポイントを指定
           flet build apk --module-name app --verbose
 
-      - name: Upload APK
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-release.apk
           # ビルド成果物のパスも変更されるため修正
           # src ディレクトリでビルドした場合、通常はその中の build/apk に生成される
           path: src/build/apk/app-release.apk
+
+      - name: Create Release and Upload APK
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: src/build/apk/app-release.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
