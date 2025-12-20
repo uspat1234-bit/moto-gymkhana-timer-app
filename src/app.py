@@ -84,7 +84,7 @@ class GymkhanaApp:
             content=ft.Row(
                 [
                     ft.Text("SSID: motogym", color="white", weight=ft.FontWeight.BOLD),
-                    ft.Text("PASS: 12345678", color="white", weight=ft.FontWeight.BOLD),
+                    ft.Text("PASS: password123", color="white", weight=ft.FontWeight.BOLD),
                 ], 
                 alignment=ft.MainAxisAlignment.CENTER, spacing=20, wrap=True
             ),
