@@ -24,13 +24,13 @@ MULTI_GOAL_DISPLAY_TIME = 3.0
 class GymkhanaApp:
     def __init__(self):
         self.running = True
-        self.sock = None # ソケットをインスタンス変数で管理
+        self.sock = None
         
         # --- 共通状態 ---
         self.last_start_sensor_time = 0.0
         self.last_stop_sensor_time = 0.0
         
-        # センサーの詳細情報
+        # センサーの詳細情報 (RSSI, Protocol)
         self.start_sensor_detail = {"rssi": None, "proto": ""}
         self.stop_sensor_detail = {"rssi": None, "proto": ""}
         
@@ -109,7 +109,7 @@ class GymkhanaApp:
             content=ft.Row(
                 [
                     ft.Text("SSID: motogym", color="white", weight=ft.FontWeight.BOLD),
-                    ft.Text("PASS: 12345678", color="white", weight=ft.FontWeight.BOLD),
+                    ft.Text("PASS: password123", color="white", weight=ft.FontWeight.BOLD),
                 ], 
                 alignment=ft.MainAxisAlignment.CENTER, spacing=20, wrap=True
             ),
@@ -117,6 +117,7 @@ class GymkhanaApp:
         )
 
         # センサー状態
+        # ★修正: 幅を少し広げて詳細情報を表示しやすくする
         self.start_sensor_status = ft.Container(
             content=ft.Text("START\n--", color="white", weight=ft.FontWeight.BOLD, size=12, text_align=ft.TextAlign.CENTER),
             padding=5, border_radius=5, bgcolor="grey800", width=120, alignment=ft.alignment.center
@@ -508,7 +509,10 @@ class GymkhanaApp:
             info = self.start_sensor_detail
             txt = "START: OK"
             if info["rssi"] is not None:
+                # ★追加: RSSIとプロトコルを改行して表示
                 txt += f"\n{info['rssi']}dBm"
+                if info["proto"]:
+                    txt += f"\n({info['proto']})"
             self.start_sensor_status.content.value = txt
         else:
             self.start_sensor_status.bgcolor = "grey800"
@@ -523,6 +527,8 @@ class GymkhanaApp:
             txt = "GOAL: OK"
             if info["rssi"] is not None:
                 txt += f"\n{info['rssi']}dBm"
+                if info["proto"]:
+                    txt += f"\n({info['proto']})"
             self.stop_sensor_status.content.value = txt
         else:
             self.stop_sensor_status.bgcolor = "grey800"
@@ -553,7 +559,7 @@ class GymkhanaApp:
                             self.multi_main_time.color = "yellow"
                             self.page.update()
                 
-                # センサー状態更新
+                # センサー状態は常に更新
                 if self.page:
                     self.update_sensor_ui()
                     self.page.update()
