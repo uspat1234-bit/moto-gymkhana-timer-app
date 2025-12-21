@@ -10,10 +10,10 @@ UDP_PORT = 5005
 BUFFER_SIZE = 1024
 
 # センサー接続監視のタイムアウト時間（秒）
-SENSOR_TIMEOUT = 4.0
+SENSOR_TIMEOUT = 5.0
 
 # 1センサーモード時の「ゴール禁止時間」（スタート直後の誤反応防止）
-MIN_LAP_TIME = 4.0 
+MIN_LAP_TIME = 5.0 
 
 # MULTIモードの履歴表示上限数
 MAX_HISTORY_COUNT = 20
@@ -24,10 +24,15 @@ MULTI_GOAL_DISPLAY_TIME = 3.0
 class GymkhanaApp:
     def __init__(self):
         self.running = True
+        self.sock = None # ソケットをインスタンス変数で管理
         
         # --- 共通状態 ---
         self.last_start_sensor_time = 0.0
         self.last_stop_sensor_time = 0.0
+        
+        # センサーの詳細情報
+        self.start_sensor_detail = {"rssi": None, "proto": ""}
+        self.stop_sensor_detail = {"rssi": None, "proto": ""}
         
         # 現在のモード (None, 'MULTI', 'SOLO')
         self.current_mode = None
@@ -68,6 +73,10 @@ class GymkhanaApp:
         page.padding = 10
         page.scroll = ft.ScrollMode.AUTO 
 
+        # ★重要: アプリ終了時の処理をフックする
+        page.window.prevent_close = True
+        page.window.on_event = self.window_event
+
         # 共通UIパーツの初期化
         self.init_common_ui()
 
@@ -78,13 +87,29 @@ class GymkhanaApp:
         # 初期画面：モード選択
         self.show_mode_selection()
 
+    # ★追加: ウィンドウイベントハンドラ
+    def window_event(self, e):
+        if e.data == "close":
+            self.cleanup()
+            self.page.window.destroy()
+
+    # ★追加: 終了時のクリーンアップ処理
+    def cleanup(self):
+        self.running = False
+        # ソケットを強制的に閉じてポートを解放する
+        if self.sock:
+            try:
+                self.sock.close()
+            except:
+                pass
+
     def init_common_ui(self):
         # ヘッダー情報
         self.wifi_info = ft.Container(
             content=ft.Row(
                 [
                     ft.Text("SSID: motogym", color="white", weight=ft.FontWeight.BOLD),
-                    ft.Text("PASS: password123", color="white", weight=ft.FontWeight.BOLD),
+                    ft.Text("PASS: 12345678", color="white", weight=ft.FontWeight.BOLD),
                 ], 
                 alignment=ft.MainAxisAlignment.CENTER, spacing=20, wrap=True
             ),
@@ -93,12 +118,12 @@ class GymkhanaApp:
 
         # センサー状態
         self.start_sensor_status = ft.Container(
-            content=ft.Text("START", color="white", weight=ft.FontWeight.BOLD, size=12),
-            padding=5, border_radius=5, bgcolor="grey800", width=80, alignment=ft.alignment.center
+            content=ft.Text("START\n--", color="white", weight=ft.FontWeight.BOLD, size=12, text_align=ft.TextAlign.CENTER),
+            padding=5, border_radius=5, bgcolor="grey800", width=120, alignment=ft.alignment.center
         )
         self.stop_sensor_status = ft.Container(
-            content=ft.Text("GOAL", color="white", weight=ft.FontWeight.BOLD, size=12),
-            padding=5, border_radius=5, bgcolor="grey800", width=80, alignment=ft.alignment.center
+            content=ft.Text("GOAL\n--", color="white", weight=ft.FontWeight.BOLD, size=12, text_align=ft.TextAlign.CENTER),
+            padding=5, border_radius=5, bgcolor="grey800", width=120, alignment=ft.alignment.center
         )
         
         self.sensor_row = ft.Row(
@@ -235,7 +260,7 @@ class GymkhanaApp:
             self.solo_status_text,
             self.solo_time_display,
             ft.Container(height=40),
-            # SOLOモードはボタンなし(センサー操作のみ)
+            ft.ElevatedButton("RESET", color="white", bgcolor="red900", on_click=self.reset_solo_timer, width=150, height=50)
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER)
 
         self.page.add(
@@ -278,9 +303,10 @@ class GymkhanaApp:
 
     # --- MULTIモード用ロジック ---
     def reset_multi_history(self, e):
-        # 走行中のデータは消さない方が安全
-        if self.multi_history_list:
-            self.multi_history_list.controls.clear()
+        """履歴ログをクリア（走行中のデータは消さない）"""
+        # self.active_runners.clear() # 走行中は消さない方が安全
+        self.multi_history_list.controls.clear()
+        # self.history_count = 0 # 番号は継続させる
         self.page.update()
 
     def handle_multi_start(self, rider_name="Unknown", rider_id="---"):
@@ -396,7 +422,7 @@ class GymkhanaApp:
                 
             for r in self.active_runners[start_index:]:
                 others.append(f"#{r['num']} {r['name']}")
-                
+            
             if others:
                 self.multi_queue_text.value = "Following: " + ", ".join(others)
             else:
@@ -404,35 +430,55 @@ class GymkhanaApp:
             
         self.page.update()
 
-    # --- 監視ループ ---
-
+    # --- 共通ロジック ---
     def udp_listener(self):
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # インスタンス変数としてソケットを持つように変更
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # ソケット再利用設定
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
         try:
-            sock.bind(('0.0.0.0', UDP_PORT))
-            sock.settimeout(1.0)
+            self.sock.bind(('0.0.0.0', UDP_PORT))
+            self.sock.settimeout(1.0)
             print(f"UDP Listening on port {UDP_PORT}...")
 
             while self.running:
                 try:
-                    data, addr = sock.recvfrom(BUFFER_SIZE)
+                    data, addr = self.sock.recvfrom(BUFFER_SIZE)
                     message = data.decode('utf-8').strip()
                     
+                    # 信号解析
                     is_start = False
                     is_stop = False
                     
+                    # ★修正: JSON (死活監視) と計測コマンドを処理
+                    if message.startswith("{"):
+                        try:
+                            j = json.loads(message)
+                            if j.get("status") == "alive":
+                                stype = j.get("sensor")
+                                rssi = j.get("rssi")
+                                proto = j.get("proto")
+                                
+                                if stype == "START": 
+                                    self.last_start_sensor_time = time.time()
+                                    self.start_sensor_detail = {"rssi": rssi, "proto": proto}
+                                elif stype == "GOAL": 
+                                    self.last_stop_sensor_time = time.time()
+                                    self.stop_sensor_detail = {"rssi": rssi, "proto": proto}
+                        except: pass
+                        continue
+
                     if "START" in message:
                         is_start = True
                         self.last_start_sensor_time = time.time()
                     elif "STOP" in message:
                         is_stop = True
                         self.last_stop_sensor_time = time.time()
-                    
-                    if message.startswith("{"): continue
 
-                    # 現在のモードに基づいて処理を分岐
+                    # モード分岐
                     if self.current_mode == "MULTI":
-                        if is_start: self.handle_multi_start()
+                        if is_start: self.handle_multi_start("Rider", "---")
                         if is_stop: self.handle_multi_stop()
                     elif self.current_mode == "SOLO":
                         if is_start or is_stop:
@@ -441,42 +487,65 @@ class GymkhanaApp:
                 except socket.timeout:
                     continue
                 except Exception as e:
-                    print(f"UDP Error: {e}")
+                    # 終了時のソケットエラーは無視
+                    if self.running:
+                        print(f"UDP Error: {e}")
         finally:
-            sock.close()
+            try:
+                self.sock.close()
+            except:
+                pass
 
     def update_sensor_ui(self):
+        """センサー状態表示の更新 (詳細情報追加)"""
         now = time.time()
+        
         # START
         if now - self.last_start_sensor_time < SENSOR_TIMEOUT:
             self.start_sensor_status.bgcolor = "green"
+            
+            # 詳細テキスト作成
+            info = self.start_sensor_detail
+            txt = "START: OK"
+            if info["rssi"] is not None:
+                txt += f"\n{info['rssi']}dBm"
+            self.start_sensor_status.content.value = txt
         else:
             self.start_sensor_status.bgcolor = "grey800"
+            self.start_sensor_status.content.value = "START\n--"
             
         # STOP
         if now - self.last_stop_sensor_time < SENSOR_TIMEOUT:
             self.stop_sensor_status.bgcolor = "green"
+            
+            # 詳細テキスト作成
+            info = self.stop_sensor_detail
+            txt = "GOAL: OK"
+            if info["rssi"] is not None:
+                txt += f"\n{info['rssi']}dBm"
+            self.stop_sensor_status.content.value = txt
         else:
             self.stop_sensor_status.bgcolor = "grey800"
+            self.stop_sensor_status.content.value = "GOAL\n--"
 
     def timer_loop(self):
+        """画面更新ループ"""
         while self.running:
             try:
                 now = time.time()
                 
-                if self.current_mode == "SOLO":
-                    if self.solo_running and self.solo_time_display:
-                        self.solo_time_display.value = f"{now - self.solo_start_time:.3f}"
-                        self.page.update()
+                # SOLOモードのタイマー計算
+                if self.current_mode == "SOLO" and self.solo_running and self.solo_time_display:
+                    self.solo_time_display.value = f"{now - self.solo_start_time:.3f}"
+                    self.page.update()
                 
+                # MULTIモードのタイマー計算
                 elif self.current_mode == "MULTI":
-                    # ゴール表示維持中はタイマー更新しない
                     if self.multi_hold_runner and now > self.multi_hold_expire_time:
                         self.multi_hold_runner = None
                         self.update_multi_ui_state()
 
                     if not self.multi_hold_runner and self.active_runners:
-                        # 先頭ランナーのタイムを更新
                         target = self.active_runners[0]
                         current_time = now - target['start_time']
                         if self.multi_main_time:
@@ -484,7 +553,7 @@ class GymkhanaApp:
                             self.multi_main_time.color = "yellow"
                             self.page.update()
                 
-                # センサー状態は常に更新
+                # センサー状態更新
                 if self.page:
                     self.update_sensor_ui()
                     self.page.update()
