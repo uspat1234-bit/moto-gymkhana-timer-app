@@ -1,8 +1,9 @@
 name: Build Multiple Android APKs
 
 on:
-  tags:
-    - 'v*'
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 permissions:
