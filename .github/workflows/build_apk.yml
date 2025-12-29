@@ -31,28 +31,23 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.29.0'
+          # Fletの要求に合わせて 3.38.3 に更新
+          flutter-version: '3.38.3'
           channel: 'stable'
 
       - name: Build All APKs
         run: |
-          # 成果物を格納する一時ディレクトリを作成
           mkdir dist
-          
-          # src配下の各ディレクトリに対してループ
           for app_dir in src/*/ ; do
-            # ディレクトリ名を取得 (例: time_ratio_app)
             app_name=$(basename "$app_dir")
             echo "--------------------------------------------"
             echo "Building App: $app_name"
             echo "--------------------------------------------"
             
-            # 各アプリのディレクトリに移動してビルド
-            # --target-dir を指定することで、ディレクトリ内の main.py をビルド
-            flet build apk --project "$app_dir"
+            # --yes フラグを追加して確認をスキップ
+            # --project でディレクトリを指定
+            flet build apk --project "$app_dir" --yes
             
-            # ビルドされた成果物をリネームして dist にコピー
-            # 通常 flet build はプロジェクトルート直下の build/apk に生成される
             if [ -f "$app_dir/build/apk/app-release.apk" ]; then
               cp "$app_dir/build/apk/app-release.apk" "dist/${app_name}.apk"
             else
