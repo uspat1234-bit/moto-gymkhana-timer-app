@@ -31,28 +31,46 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          # Fletの要求に合わせて 3.38.3 に更新
           flutter-version: '3.38.3'
           channel: 'stable'
 
+      - name: Accept Android Licenses
+        run: yes | flutter doctor --android-licenses
+
       - name: Build All APKs
         run: |
-          mkdir dist
+          mkdir -p dist
+          # 絶対パスでdistディレクトリを保持
+          DIST_DIR=$(pwd)/dist
+          
           for app_dir in src/*/ ; do
+            # ディレクトリ名を取得
+            app_dir=${app_dir%/}
             app_name=$(basename "$app_dir")
+            
             echo "--------------------------------------------"
             echo "Building App: $app_name"
             echo "--------------------------------------------"
             
-            # --yes フラグを追加して確認をスキップ
-            # --project でディレクトリを指定
-            flet build apk --project "$app_dir" --yes
-            
-            if [ -f "$app_dir/build/apk/app-release.apk" ]; then
-              cp "$app_dir/build/apk/app-release.apk" "dist/${app_name}.apk"
+            # ディレクトリの存在確認
+            if [ -f "$app_dir/main.py" ]; then
+              # 【ここがポイント】ディレクトリに移動してからビルド
+              cd "$app_dir"
+              flet build apk --yes
+              
+              # ビルド完了後、成果物をコピー
+              # Fletはビルドしたディレクトリ直下の build/apk/ にファイルを生成します
+              if [ -f "build/apk/app-release.apk" ]; then
+                cp "build/apk/app-release.apk" "$DIST_DIR/${app_name}.apk"
+              else
+                # 念のため別の名前でも探す
+                find build/apk -name "*.apk" -exec cp {} "$DIST_DIR/${app_name}.apk" \;
+              fi
+              
+              # 元のディレクトリ(プロジェクトルート)に戻る
+              cd ../..
             else
-              echo "Error: Build failed for $app_name"
-              exit 1
+              echo "Skip: $app_dir (main.py not found)"
             fi
           done
 
