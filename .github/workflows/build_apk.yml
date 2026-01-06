@@ -1,23 +1,24 @@
-name: Build Multiple Android APKs
+name: Build Android APK
 
 on:
   push:
     tags:
-      - 'v*'
-  workflow_dispatch:
+      - 'v*' # v1.0.0 などのタグプッシュで発動
+  workflow_dispatch: # 手動実行も許可
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  build-android:
+    name: Build APK
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -26,61 +27,62 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install flet
+          # requirements.txt があればインストール
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.38.3'
+          flutter-version: '3.29.0'
           channel: 'stable'
 
       - name: Accept Android Licenses
         run: yes | flutter doctor --android-licenses
 
-      - name: Build All APKs
+      - name: Build APK
         run: |
+          # 出力用ディレクトリ作成
           mkdir -p dist
-          # 絶対パスでdistディレクトリを保持
-          DIST_DIR=$(pwd)/dist
+          DIST_DIR="$GITHUB_WORKSPACE/dist"
           
-          for app_dir in src/*/ ; do
-            # ディレクトリ名を取得
-            app_dir=${app_dir%/}
-            app_name=$(basename "$app_dir")
-            
-            echo "--------------------------------------------"
-            echo "Building App: $app_name"
-            echo "--------------------------------------------"
-            
-            # ディレクトリの存在確認
-            if [ -f "$app_dir/main.py" ]; then
-              # 【ここがポイント】ディレクトリに移動してからビルド
-              cd "$app_dir"
-              flet build apk --yes
-              
-              # ビルド完了後、成果物をコピー
-              # Fletはビルドしたディレクトリ直下の build/apk/ にファイルを生成します
-              if [ -f "build/apk/app-release.apk" ]; then
-                cp "build/apk/app-release.apk" "$DIST_DIR/${app_name}.apk"
-              else
-                # 念のため別の名前でも探す
-                find build/apk -name "*.apk" -exec cp {} "$DIST_DIR/${app_name}.apk" \;
-              fi
-              
-              # 元のディレクトリ(プロジェクトルート)に戻る
-              cd ../..
-            else
-              echo "Skip: $app_dir (main.py not found)"
-            fi
-          done
+          # アプリの場所とエントリーポイントを自動判別
+          if [ -d "src/gymkhana_mobile" ]; then
+            echo "Found app in src/gymkhana_mobile"
+            cd "src/gymkhana_mobile"
+            MODULE_NAME="main"
+          elif [ -f "main.py" ]; then
+            echo "Found main.py in root"
+            MODULE_NAME="main"
+          elif [ -f "app.py" ]; then
+            echo "Found app.py in root"
+            MODULE_NAME="app"
+          else
+            echo "Error: Application entry point (main.py or app.py) not found."
+            exit 1
+          fi
+          
+          echo "Building module: $MODULE_NAME in $(pwd)..."
+          
+          # ビルド実行
+          flet build apk --module-name $MODULE_NAME --yes --verbose
+          
+          # 成果物を回収 (Fletは build/apk/app-release.apk に出力する)
+          if [ -f "build/apk/app-release.apk" ]; then
+             cp "build/apk/app-release.apk" "$DIST_DIR/GymkhanaTimer_Mobile.apk"
+             echo "✅ APK copied to dist/"
+          else
+             # 見つからない場合は検索してコピー
+             echo "Searching for APK..."
+             find . -name "*.apk" -exec cp {} "$DIST_DIR/GymkhanaTimer_Mobile.apk" \;
+          fi
 
-      - name: Upload APK Artifacts
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: all-apps-apks
+          name: android-app
           path: dist/*.apk
 
-      - name: Create Release and Upload APKs
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
