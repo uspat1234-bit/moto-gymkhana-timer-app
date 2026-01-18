@@ -32,7 +32,8 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.29.0'
+          # Fletの要求に合わせて少し新しめのバージョンを指定
+          flutter-version: '3.29.2'
           channel: 'stable'
 
       - name: Accept Android Licenses
@@ -66,9 +67,9 @@ jobs:
           ls -F
 
           # 4. ビルド実行
-          # エラー解消: Flet CLI 0.80.2 では --project-dir 引数は不要（または未対応）です。
-          # cd でディレクトリ移動済みのため、引数なしで実行してカレントディレクトリをビルドします。
-          flet build apk --verbose
+          # 修正ポイント: --yes フラグを追加して対話型プロンプトを回避
+          # これにより、SDKのインストール確認などで止まることなくビルドが進みます
+          flet build apk --verbose --yes
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
