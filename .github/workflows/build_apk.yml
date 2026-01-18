@@ -26,7 +26,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install flet
-          # 依存関係がある場合はインストール (ui_components.py 等で外部ライブラリを使っている場合)
+          # 依存関係がある場合はインストール
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Setup Flutter
@@ -66,8 +66,8 @@ jobs:
           ls -F
 
           # 4. ビルド実行
-          # エラー解消: 最新のFlet CLIでは --project-dir フラグが認識されないため削除
-          # すでに cd でディレクトリ移動済みのため、その場所でビルドが実行されます
+          # エラー解消: Flet CLI 0.80.2 では --project-dir 引数は不要（または未対応）です。
+          # cd でディレクトリ移動済みのため、引数なしで実行してカレントディレクトリをビルドします。
           flet build apk --verbose
 
       - name: Upload APK Artifact
