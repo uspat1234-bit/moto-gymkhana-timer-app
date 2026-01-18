@@ -66,8 +66,9 @@ jobs:
           ls -F
 
           # 4. ビルド実行
-          # --project-dir . を指定することで、隣にある config.py 等を確実に含める
-          flet build apk --project-dir . --verbose
+          # エラー解消: 最新のFlet CLIでは --project-dir フラグが認識されないため削除
+          # すでに cd でディレクトリ移動済みのため、その場所でビルドが実行されます
+          flet build apk --verbose
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
