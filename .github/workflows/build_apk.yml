@@ -3,22 +3,21 @@ name: Build Android APK
 on:
   push:
     tags:
-      - 'v*' # v1.0.0 などのタグプッシュで発動
-  workflow_dispatch: # 手動実行も許可
+      - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build-android:
-    name: Build APK
+  build:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -27,7 +26,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install flet
-          # requirements.txt があればインストール
+          # 依存関係がある場合はインストール (ui_components.py 等で外部ライブラリを使っている場合)
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Setup Flutter
@@ -41,51 +40,47 @@ jobs:
 
       - name: Build APK
         run: |
-          # 出力用ディレクトリ作成
-          mkdir -p dist
-          DIST_DIR="$GITHUB_WORKSPACE/dist"
-          
-          # アプリの場所とエントリーポイントを自動判別
+          # 1. アプリのソースコードがあるフォルダへ確実に移動
           if [ -d "src/gymkhana_mobile" ]; then
-            echo "Found app in src/gymkhana_mobile"
-            cd "src/gymkhana_mobile"
-            MODULE_NAME="main"
-          elif [ -f "main.py" ]; then
-            echo "Found main.py in root"
-            MODULE_NAME="main"
-          elif [ -f "app.py" ]; then
-            echo "Found app.py in root"
-            MODULE_NAME="app"
+            cd src/gymkhana_mobile
+            echo "📂 Working directory: $(pwd)"
           else
-            echo "Error: Application entry point (main.py or app.py) not found."
+            echo "❌ src/gymkhana_mobile not found!"
             exit 1
           fi
-          
-          echo "Building module: $MODULE_NAME in $(pwd)..."
-          
-          # ビルド実行
-          flet build apk --module-name $MODULE_NAME --yes --verbose
-          
-          # 成果物を回収 (Fletは build/apk/app-release.apk に出力する)
-          if [ -f "build/apk/app-release.apk" ]; then
-             cp "build/apk/app-release.apk" "$DIST_DIR/GymkhanaTimer_Mobile.apk"
-             echo "✅ APK copied to dist/"
-          else
-             # 見つからない場合は検索してコピー
-             echo "Searching for APK..."
-             find . -name "*.apk" -exec cp {} "$DIST_DIR/GymkhanaTimer_Mobile.apk" \;
+
+          # 2. main.py が存在することを確認 (Fletビルドのデフォルト)
+          if [ ! -f "main.py" ]; then
+            if [ -f "app.py" ]; then
+              mv app.py main.py
+              echo "🔄 Renamed app.py to main.py"
+            else
+              echo "❌ main.py or app.py not found in $(pwd)"
+              ls -l
+              exit 1
+            fi
           fi
+
+          # 3. 構成ファイルのリストを表示 (デバッグ用)
+          echo "📦 Current files for packaging:"
+          ls -F
+
+          # 4. ビルド実行
+          # --project-dir . を指定することで、隣にある config.py 等を確実に含める
+          flet build apk --project-dir . --verbose
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: android-app
-          path: dist/*.apk
+          name: app-release.apk
+          # すべてのサブディレクトリからapkを探してアップロード
+          path: "**/build/apk/*.apk"
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: dist/*.apk
+          # リリースには完成したAPKのみを添付
+          files: "**/build/apk/app-release.apk"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
