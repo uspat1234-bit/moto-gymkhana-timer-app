@@ -4,585 +4,363 @@ import json
 import threading
 import time
 import datetime
+import traceback
 
-# 分割したファイルをインポート
-import config
-from network import UdpListener
-import ui_components as ui
+# --- 設定値 (config.pyの内容を統合) ---
+UDP_PORT = 5005
+BUFFER_SIZE = 1024
+SENSOR_TIMEOUT = 5.0
+MIN_LAP_TIME = 5.0 
+MAX_HISTORY_COUNT = 20
+MULTI_GOAL_DISPLAY_TIME = 3.0
+
+# --- UI部品の関数 ---
+def create_wifi_info():
+    return ft.Container(
+        content=ft.Row([
+            ft.Text("SSID: motogym", color="white", weight="bold"),
+            ft.Text("PASS: 12345678", color="white", weight="bold"),
+        ], alignment="center", spacing=20, wrap=True),
+        padding=10, bgcolor="grey900", border_radius=10
+    )
+
+def create_sensor_status(label):
+    return ft.Container(
+        content=ft.Text(f"{label}\n--", color="white", weight="bold", size=12, text_align="center"),
+        padding=5, border_radius=5, bgcolor="grey800", width=120, alignment=ft.alignment.center
+    )
 
 class GymkhanaApp:
     def __init__(self):
         self.running = True
-        
-        # 状態変数
+        # 共通センサー状態
         self.last_start_sensor_time = 0.0
         self.last_stop_sensor_time = 0.0
         self.start_sensor_detail = {"rssi": None, "proto": ""}
         self.stop_sensor_detail = {"rssi": None, "proto": ""}
         
-        self.current_mode = None
+        self.current_mode = None # 'MULTI', 'SOLO', 'CALC'
+        
+        # SOLOモード用状態
         self.solo_running = False
         self.solo_start_time = 0.0
+        
+        # MULTIモード用状態
         self.active_runners = [] 
         self.history_count = 0
         self.multi_hold_runner = None 
         self.multi_hold_expire_time = 0.0
-
-        # 計算機モード用
-        self.calc_target = "top" 
-
-        # 通信モジュール
-        self.udp_server = UdpListener(self.on_udp_message)
-
-        # UIパーツ参照用
-        self.solo_time_display = None
-        self.multi_main_time = None
-        self.start_sensor_status = None
-        self.stop_sensor_status = None
         
-        # ★追加: エラー回避のために初期化
-        self.multi_history_list = None
+        # 計算機用状態
+        self.calc_target = "top" 
 
     def main(self, page: ft.Page):
         self.page = page
-        page.title = "Gymkhana Timer Mobile"
+        page.title = "Gymkhana Timer"
         page.bgcolor = "#1a1a1a"
+        page.theme_mode = "dark"
         page.padding = 10
-        page.scroll = ft.ScrollMode.AUTO 
+        page.scroll = ft.ScrollMode.AUTO
 
-        page.window.prevent_close = True
-        page.window.on_event = self.window_event
+        try:
+            # センサー表示UIの初期化
+            self.start_sensor_status = create_sensor_status("START")
+            self.stop_sensor_status = create_sensor_status("GOAL")
+            self.sensor_row = ft.Row(
+                [ft.Text("Sensor:", color="grey400"), self.start_sensor_status, self.stop_sensor_status],
+                alignment="center", spacing=10
+            )
 
-        self.init_common_ui()
+            # 通信とタイマーの開始
+            threading.Thread(target=self.udp_listener, daemon=True).start()
+            threading.Thread(target=self.timer_loop, daemon=True).start()
 
-        # 通信とタイマーを開始
-        self.udp_server.start()
-        threading.Thread(target=self.timer_loop, daemon=True).start()
+            self.show_mode_selection()
+        except Exception as e:
+            self.show_error(e)
 
-        self.show_mode_selection()
-
-    def window_event(self, e):
-        if e.data == "close":
-            self.running = False
-            self.udp_server.stop()
-            self.page.window.destroy()
-
-    def init_common_ui(self):
-        self.start_sensor_status = ui.create_sensor_status("START")
-        self.stop_sensor_status = ui.create_sensor_status("GOAL")
-        
-        self.sensor_row = ft.Row(
-            [ft.Text("Sensor:", color="grey"), self.start_sensor_status, self.stop_sensor_status],
-            alignment=ft.MainAxisAlignment.CENTER, spacing=10, wrap=True
+    def show_error(self, e):
+        self.page.clean()
+        self.page.add(
+            ft.Text("⚠️ Fatal Error", color="red", size=20, weight="bold"),
+            ft.Text(traceback.format_exc(), color="white", font_family="monospace", size=10)
         )
+        self.page.update()
 
-    # --- UDPメッセージ受信処理 (コールバック) ---
-    def on_udp_message(self, message):
-        # 信号解析
-        is_start = False
-        is_stop = False
-        
-        # JSON (死活監視など)
-        if message.startswith("{"):
-            try:
-                j = json.loads(message)
-                if j.get("status") == "alive":
-                    stype = j.get("sensor")
-                    rssi = j.get("rssi")
-                    proto = j.get("proto")
-                    
-                    if stype == "START": 
-                        self.last_start_sensor_time = time.time()
-                        self.start_sensor_detail = {"rssi": rssi, "proto": proto}
-                    elif stype == "GOAL": 
-                        self.last_stop_sensor_time = time.time()
-                        self.stop_sensor_detail = {"rssi": rssi, "proto": proto}
-                
-                # エントリー情報
-                elif j.get("type") == "ENTRY":
-                    name = j.get("name")
-                    rid = j.get("id")
-                    if self.current_mode == "MULTI":
-                        self.next_rider_name = name
-                        self.next_rider_id = rid
-                        print(f"Next Rider Registered: {name}")
-            except: pass
-            return
-
-        # 計測コマンド
-        if message == "START":
-            is_start = True
-            self.last_start_sensor_time = time.time()
-        elif message == "STOP":
-            is_stop = True
-            self.last_stop_sensor_time = time.time()
-
-        # モードごとの処理呼び出し
-        if self.current_mode == "MULTI":
-            if is_start: 
-                rider_name = getattr(self, 'next_rider_name', 'Unknown')
-                rider_id = getattr(self, 'next_rider_id', '---')
-                self.handle_multi_start(rider_name, rider_id)
-                self.next_rider_name = "Unknown"
-                self.next_rider_id = "---"
-            if is_stop: self.handle_multi_stop()
-        elif self.current_mode == "SOLO":
-            if is_start or is_stop:
-                self.handle_solo_signal()
-
-    # --- 画面構築・遷移 ---
     def show_mode_selection(self):
         self.current_mode = None
         self.page.clean()
+        
+        def create_btn(icon, title, subtitle, color, click_fn):
+            return ft.Container(
+                content=ft.Column([
+                    ft.Icon(name=icon, size=40, color=color),
+                    ft.Text(title, size=18, weight="bold", color=color),
+                    ft.Text(subtitle, size=12, color="grey"),
+                ], alignment="center", horizontal_alignment="center"),
+                padding=15, bgcolor="grey900", border_radius=10,
+                border=ft.Border(top=ft.BorderSide(1, color), bottom=ft.BorderSide(1, color), left=ft.BorderSide(1, color), right=ft.BorderSide(1, color)),
+                on_click=click_fn, ink=True
+            )
 
-        btn_multi = ui.create_mode_button("people", "MULTI MODE", "複数人追走計測 (2センサー)", "cyan", lambda e: self.show_multi_mode())
-        btn_solo = ui.create_mode_button("timer", "SOLO MODE", "単独計測 (1センサー)", "orange", lambda e: self.show_solo_mode())
-        btn_calc = ui.create_mode_button("calculate", "TIME CALC", "タイム比・目標計算", "green", lambda e: self.show_calc_mode())
+        btn_multi = create_btn("people", "MULTI MODE", "複数人追走 (2センサー)", "cyan", lambda _: self.show_multi_mode())
+        btn_solo = create_btn("timer", "SOLO MODE", "単独計測 (1センサー)", "orange", lambda _: self.show_solo_mode())
+        btn_calc = create_btn("calculate", "TIME CALC", "タイム比計算機", "green", lambda _: self.show_calc_mode())
 
         self.page.add(
-            ui.create_wifi_header(),
+            create_wifi_info(),
             ft.Container(height=10),
             self.sensor_row,
-            ft.Container(height=30),
-            ft.Text("モードを選択してください", size=16, color="white", weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER),
             ft.Container(height=20),
+            ft.Text("モードを選択してください", size=14, color="white", text_align="center"),
+            ft.Container(height=10),
             btn_multi,
-            ft.Container(height=15),
+            ft.Container(height=10),
             btn_solo,
-            ft.Container(height=15),
+            ft.Container(height=10),
             btn_calc
         )
         self.page.update()
 
+    # --- MULTI MODE ---
     def show_multi_mode(self):
         self.current_mode = "MULTI"
         self.page.clean()
-        self.active_runners = []
-        self.history_count = 0
-        
-        # ★ここでインスタンス変数に代入
-        self.multi_list_view = ft.ListView(expand=True, spacing=2, padding=10, auto_scroll=False, height=300)
-        self.multi_history_list = self.multi_list_view # 別名でも参照できるようにする(念のため)
-
-        header = ui.create_back_header("MULTI MODE", "cyan", lambda e: self.show_mode_selection(),
-            ft.ElevatedButton("CLEAR LOG", color="white", bgcolor="red900", on_click=self.reset_multi_history)
-        )
-
-        self.multi_main_time = ft.Text("0.000", size=70, color="yellow", font_family="monospace", weight=ft.FontWeight.BOLD)
-        self.multi_main_status = ft.Text("READY", size=20, color="grey")
-        self.multi_main_name = ft.Text("---", size=30, color="white", weight=ft.FontWeight.BOLD)
-
-        multi_main_container = ft.Container(
-            content=ft.Column([
-                ft.Text("CURRENT RUNNER", size=12, color="grey"),
-                self.multi_main_name,
-                self.multi_main_time,
-                self.multi_main_status
-            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-            padding=20, bgcolor="grey900", border_radius=15, border=ft.border.all(2, "grey800"),
-            alignment=ft.alignment.center
-        )
-
-        self.multi_queue_text = ft.Text("No other runners on course", color="grey", size=14)
+        self.multi_main_time = ft.Text("0.000", size=60, color="yellow", weight="bold", font_family="monospace")
+        self.multi_main_name = ft.Text("---", size=24, color="white", weight="bold")
+        self.multi_main_status = ft.Text("READY", size=16, color="grey")
+        self.multi_history_list = ft.ListView(expand=True, spacing=5, height=200)
+        self.multi_queue_text = ft.Text("No other runners", color="grey", size=12)
 
         self.page.add(
-            header,
+            ft.Row([
+                ft.IconButton(icon="arrow_back", on_click=lambda _: self.show_mode_selection()),
+                ft.Text("MULTI MODE", size=20, weight="bold", color="cyan"),
+            ], alignment="spaceBetween"),
             self.sensor_row,
-            ft.Divider(color="grey"),
-            multi_main_container,
-            ft.Container(height=10),
-            ft.Text("ON COURSE:", size=14, color="cyan", weight=ft.FontWeight.BOLD),
+            ft.Container(
+                content=ft.Column([
+                    self.multi_main_name, self.multi_main_time, self.multi_main_status
+                ], horizontal_alignment="center"),
+                padding=20, bgcolor="grey900", border_radius=15, alignment=ft.alignment.center,
+                border=ft.Border(top=ft.BorderSide(2, "grey800"), bottom=ft.BorderSide(2, "grey800"), left=ft.BorderSide(2, "grey800"), right=ft.BorderSide(2, "grey800"))
+            ),
+            ft.Text("ON COURSE:", size=12, color="cyan", weight="bold"),
             self.multi_queue_text,
-            ft.Divider(color="grey"),
-            ft.Text("RESULT LOG:", size=14, color="white", weight=ft.FontWeight.BOLD),
-            # ★ここで self.multi_list_view を使用
-            self.multi_list_view
+            ft.Divider(color="grey800"),
+            ft.Text("HISTORY:", size=12, color="white"),
+            self.multi_history_list
         )
         self.page.update()
 
+    # --- SOLO MODE ---
     def show_solo_mode(self):
         self.current_mode = "SOLO"
-        self.page.clean()
         self.solo_running = False
-        self.solo_start_time = 0.0
-        
-        self.solo_time_display = ft.Text(value="0.000", size=70, color="yellow", font_family="monospace", weight=ft.FontWeight.BOLD)
-        self.solo_status_text = ft.Text(value="READY", size=24, color="grey400")
-        
-        header = ui.create_back_header("SOLO MODE", "orange", lambda e: self.show_mode_selection())
+        self.page.clean()
+        self.solo_time_display = ft.Text("0.000", size=80, color="yellow", weight="bold", font_family="monospace")
+        self.solo_status_text = ft.Text("READY", size=20, color="grey")
 
-        content = ft.Column([
-            ft.Container(height=20),
-            ft.Text("スタートセンサーのみ使用 (通過でStart/Stop切替)", color="grey", size=12, text_align=ft.TextAlign.CENTER),
+        self.page.add(
+            ft.Row([
+                ft.IconButton(icon="arrow_back", on_click=lambda _: self.show_mode_selection()),
+                ft.Text("SOLO MODE", size=20, weight="bold", color="orange"),
+            ], alignment="spaceBetween"),
+            self.sensor_row,
             ft.Container(height=40),
-            self.solo_status_text,
-            self.solo_time_display,
-            ft.Container(height=40),
-            ft.ElevatedButton("RESET", color="white", bgcolor="red900", on_click=self.reset_solo_timer, width=150, height=50)
-        ], horizontal_alignment=ft.CrossAxisAlignment.CENTER)
-
-        self.page.add(header, self.sensor_row, content)
+            ft.Column([
+                self.solo_status_text,
+                self.solo_time_display,
+                ft.Container(height=20),
+                ft.ElevatedButton("RESET", color="white", bgcolor="red900", on_click=lambda _: self.reset_solo())
+            ], horizontal_alignment="center")
+        )
         self.page.update()
 
+    def reset_solo(self):
+        self.solo_running = False
+        self.solo_time_display.value = "0.000"
+        self.solo_time_display.color = "yellow"
+        self.solo_status_text.value = "RESET"
+        self.page.update()
+
+    # --- CALC MODE ---
     def show_calc_mode(self):
-        """タイム計算機画面 (Top比/仮想タイム)"""
         self.current_mode = "CALC"
         self.page.clean()
         
-        header = ui.create_back_header("TIME CALCULATOR", "green", lambda e: self.show_mode_selection())
+        self.txt_top = ft.Text("", size=30, color="yellow")
+        self.txt_ratio = ft.Text("105", size=30, color="cyan")
+        self.txt_my = ft.Text("", size=30, color="white")
+        self.lbl_target = ft.Text("Target: 0.000", color="grey")
+        self.calc_result = ft.Text("0.00 %", size=50, weight="bold", color="green")
 
-        self.calc_target = "top" # 'top', 'ratio', 'my'
-        
-        # --- UIパーツ ---
-        # 1. Top Time 入力
-        self.txt_top = ft.Text(value="", size=30, color="yellow", text_align=ft.TextAlign.RIGHT)
-        self.con_top = ft.Container(
-            content=self.txt_top,
-            on_click=lambda e: self.select_calc_input("top"),
-            border=ft.border.all(2, "cyan"),
-            border_radius=5, width=180, height=60, padding=10, bgcolor="grey900",
-            alignment=ft.alignment.center_right
-        )
+        def select(t):
+            self.calc_target = t
+            self.con_top.border = self._b("cyan" if t=="top" else "transparent")
+            self.con_ratio.border = self._b("cyan" if t=="ratio" else "transparent")
+            self.con_my.border = self._b("cyan" if t=="my" else "transparent")
+            self.page.update()
 
-        # 2. Ratio & Virtual Top
-        self.txt_ratio = ft.Text(value="105", size=30, color="cyan", text_align=ft.TextAlign.RIGHT)
-        self.con_ratio = ft.Container(
-            content=self.txt_ratio,
-            on_click=lambda e: self.select_calc_input("ratio"),
-            border=ft.border.all(2, "transparent"),
-            border_radius=5, width=100, height=60, padding=10, bgcolor="grey900",
-            alignment=ft.alignment.center_right
-        )
-        self.lbl_virtual_top = ft.Text("Target: 0.000", size=20, color="grey", weight=ft.FontWeight.BOLD)
+        self.con_top = ft.Container(self.txt_top, padding=10, bgcolor="grey900", border_radius=5, border=self._b("cyan"), on_click=lambda _: select("top"), width=150, height=60, alignment=ft.alignment.center_right)
+        self.con_ratio = ft.Container(self.txt_ratio, padding=10, bgcolor="grey900", border_radius=5, border=self._b("transparent"), on_click=lambda _: select("ratio"), width=100, height=60, alignment=ft.alignment.center_right)
+        self.con_my = ft.Container(self.txt_my, padding=10, bgcolor="grey900", border_radius=5, border=self._b("transparent"), on_click=lambda _: select("my"), width=150, height=60, alignment=ft.alignment.center_right)
 
-        # 3. My Time
-        self.txt_my = ft.Text(value="", size=30, color="white", text_align=ft.TextAlign.RIGHT)
-        self.con_my = ft.Container(
-            content=self.txt_my,
-            on_click=lambda e: self.select_calc_input("my"),
-            border=ft.border.all(2, "transparent"),
-            border_radius=5, width=180, height=60, padding=10, bgcolor="grey900",
-            alignment=ft.alignment.center_right
-        )
-
-        # 4. 結果 (Percentage)
-        self.calc_result_text = ft.Text("0.00 %", size=60, color="green", weight=ft.FontWeight.BOLD)
-
-        # テンキー作成
-        def k(lbl, col="grey800", width=80): 
-            return ui.create_calc_key(lbl, lambda e: self.on_calc_key_click(lbl), col, width)
+        def k(val, col="grey800", w=80):
+            return ft.Container(ft.Text(val, size=20, weight="bold"), width=w, height=50, bgcolor=col, border_radius=8, alignment=ft.alignment.center, on_click=lambda _: self.on_key(val))
 
         keypad = ft.Column([
-            ft.Row([k("7"), k("8"), k("9")], alignment=ft.MainAxisAlignment.CENTER),
-            ft.Row([k("4"), k("5"), k("6")], alignment=ft.MainAxisAlignment.CENTER),
-            ft.Row([k("1"), k("2"), k("3")], alignment=ft.MainAxisAlignment.CENTER),
-            ft.Row([k("0", width=170), k(".")], alignment=ft.MainAxisAlignment.CENTER),
-            ft.Row([k("C", "red900"), k("BS", "grey700", 170)], alignment=ft.MainAxisAlignment.CENTER),
-        ], spacing=10)
+            ft.Row([k("7"), k("8"), k("9")], alignment="center"),
+            ft.Row([k("4"), k("5"), k("6")], alignment="center"),
+            ft.Row([k("1"), k("2"), k("3")], alignment="center"),
+            ft.Row([k("C", "red900"), k("0"), k(".")], alignment="center"),
+        ])
 
-        # レイアウト配置
         self.page.add(
-            header,
-            ft.Container(height=10),
-            
-            # Top Time
-            ft.Row([ft.Text("Top Time:", width=80), self.con_top], alignment=ft.MainAxisAlignment.CENTER),
-            
-            # Ratio & Virtual
-            ft.Row([
-                ft.Text("Ratio(%):", width=80), 
-                self.con_ratio,
-                ft.Container(width=10),
-                self.lbl_virtual_top
-            ], alignment=ft.MainAxisAlignment.CENTER),
-            
-            # My Time
-            ft.Row([ft.Text("My Time:", width=80), self.con_my], alignment=ft.MainAxisAlignment.CENTER),
-            
-            ft.Divider(color="grey"),
-            
-            # Result
-            ft.Container(
-                content=ft.Column([
-                    ft.Text("My Time / Top Time", color="grey", size=12),
-                    self.calc_result_text
-                ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-                alignment=ft.alignment.center
-            ),
-            
-            ft.Container(height=10),
+            ft.Row([ft.IconButton(icon="arrow_back", on_click=lambda _: self.show_mode_selection()), ft.Text("CALC", size=20, weight="bold", color="green")]),
+            ft.Row([ft.Text("Top:"), self.con_top], alignment="center"),
+            ft.Row([ft.Text("Ratio%:"), self.con_ratio, self.lbl_target], alignment="center"),
+            ft.Row([ft.Text("My:"), self.con_my], alignment="center"),
+            ft.Divider(),
+            ft.Column([self.calc_result], horizontal_alignment="center"),
             keypad
         )
         self.page.update()
 
-    # --- CALCモード用ロジック ---
-    def select_calc_input(self, target):
-        self.calc_target = target
-        # 枠線の切り替え
-        self.con_top.border = ft.border.all(2, "cyan" if target == "top" else "transparent")
-        self.con_ratio.border = ft.border.all(2, "cyan" if target == "ratio" else "transparent")
-        self.con_my.border = ft.border.all(2, "cyan" if target == "my" else "transparent")
-        self.page.update()
+    def _b(self, color):
+        return ft.Border(top=ft.BorderSide(2, color), bottom=ft.BorderSide(2, color), left=ft.BorderSide(2, color), right=ft.BorderSide(2, color))
 
-    def on_calc_key_click(self, val):
-        if self.calc_target == "top": target_txt = self.txt_top
-        elif self.calc_target == "ratio": target_txt = self.txt_ratio
-        else: target_txt = self.txt_my
-        
-        curr = target_txt.value
-        
-        if val == "C":
-            target_txt.value = ""
-        elif val == "BS":
-            if len(curr) > 0: target_txt.value = curr[:-1]
+    def on_key(self, val):
+        target = self.txt_top if self.calc_target=="top" else (self.txt_ratio if self.calc_target=="ratio" else self.txt_my)
+        if val == "C": target.value = ""
         elif val == ".":
-            if "." not in curr: target_txt.value = curr + "."
-        else:
-            target_txt.value = curr + val
+            if "." not in target.value: target.value += "."
+        else: target.value += val
         
-        self.calc_gym_ratios()
-        self.page.update()
-
-    def calc_gym_ratios(self):
         try:
-            top = float(self.txt_top.value) if self.txt_top.value else 0.0
-            ratio = float(self.txt_ratio.value) if self.txt_ratio.value else 0.0
-            my = float(self.txt_my.value) if self.txt_my.value else 0.0
-
-            # 1. 仮想トップタイム (Target)
-            if top > 0 and ratio > 0:
-                virtual = top / (ratio / 100.0)
-                self.lbl_virtual_top.value = f"Target: {virtual:.3f}"
-            else:
-                self.lbl_virtual_top.value = "Target: 0.000"
-
-            # 2. 結果 (My / Top)
+            top = float(self.txt_top.value or 0)
+            ratio = float(self.txt_ratio.value or 0)
+            my = float(self.txt_my.value or 0)
+            if top > 0 and ratio > 0: self.lbl_target.value = f"Target: {top / (ratio/100):.3f}"
             if top > 0 and my > 0:
-                res = (my / top) * 100.0
-                self.calc_result_text.value = f"{res:.2f} %"
-                if res < 105.0: self.calc_result_text.color = "green"
-                elif res < 110.0: self.calc_result_text.color = "yellow"
-                else: self.calc_result_text.color = "red"
-            else:
-                self.calc_result_text.value = "0.00 %"
-                self.calc_result_text.color = "grey"
-
-        except:
-            self.calc_result_text.value = "Error"
-
-    # --- SOLOモード用ロジック ---
-    def reset_solo_timer(self, e):
-        self.solo_running = False
-        self.solo_start_time = 0.0
-        if self.solo_time_display:
-            self.solo_time_display.value = "0.000"
-            self.solo_time_display.color = "yellow"
-        if self.solo_status_text:
-            self.solo_status_text.value = "RESET"
+                res = (my / top) * 100
+                self.calc_result.value = f"{res:.2f} %"
+                self.calc_result.color = "green" if res < 105 else ("yellow" if res < 110 else "red")
+        except: pass
         self.page.update()
 
-    def handle_solo_signal(self):
-        current = time.time()
-        # 画面パーツが存在しない場合は処理しない
-        if not self.solo_time_display: return
+    # --- LOGIC ---
+    def udp_listener(self):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(('0.0.0.0', UDP_PORT))
+            sock.settimeout(1.0)
+            while self.running:
+                try:
+                    data, _ = sock.recvfrom(BUFFER_SIZE)
+                    msg = data.decode('utf-8').strip()
+                    
+                    if msg.startswith("{"):
+                        try:
+                            j = json.loads(msg)
+                            if j.get("status") == "alive":
+                                if j.get("sensor") == "START": self.last_start_sensor_time = time.time()
+                                else: self.last_stop_sensor_time = time.time()
+                        except: pass
+                        continue
 
-        if not self.solo_running:
-            self.solo_running = True
-            self.solo_start_time = current
-            self.solo_status_text.value = "RUNNING!"
-            self.solo_time_display.color = "green"
-            self.page.update()
-        else:
-            if current - self.solo_start_time < config.MIN_LAP_TIME: return
-            self.solo_running = False
-            result = current - self.solo_start_time
-            self.solo_time_display.value = f"{result:.3f}"
-            self.solo_status_text.value = "FINISH"
-            self.solo_time_display.color = "red"
-            self.page.update()
+                    # 計測信号の処理
+                    if self.current_mode == "MULTI":
+                        if msg == "START": self.handle_multi_start()
+                        if msg == "STOP": self.handle_multi_stop()
+                    elif self.current_mode == "SOLO":
+                        if msg == "START" or msg == "STOP": self.handle_solo_signal()
+                except socket.timeout: continue
+        except: pass
 
-    # --- MULTIモード用ロジック ---
-    def reset_multi_history(self, e):
-        """履歴ログをクリア（走行中のデータは消さない）"""
-        # self.active_runners.clear() # 走行中は消さない方が安全
-        self.multi_list_view.controls.clear()
-        # self.history_count = 0 # 番号は継続させる
-        self.page.update()
-
-    def handle_multi_start(self, rider_name="Unknown", rider_id="---"):
-        # 画面パーツが存在しない場合は処理しない
-        if not self.multi_main_time: return
-
+    def handle_multi_start(self):
         self.history_count += 1
-        
-        runner = {
-            'num': self.history_count,
-            'name': rider_name,
-            'rid': rider_id,
-            'start_time': time.time(),
-            'result_time': None
-        }
-        
-        self.active_runners.append(runner)
-        self.update_multi_ui_state()
+        self.active_runners.append({'num': self.history_count, 'name': 'Rider', 'start_time': time.time()})
+        self.update_multi_ui()
 
     def handle_multi_stop(self):
         if not self.active_runners: return
-
-        # 一番長く走っている人（リストの先頭）を取り出す
         runner = self.active_runners.pop(0)
-        
-        # タイム確定
-        result_time = time.time() - runner['start_time']
-        runner['result_time'] = result_time
-        time_str = f"{result_time:.3f}"
-        
-        # ログに追加するカードを作成
-        log_item = ui.create_multi_log_item(runner['num'], runner['name'], time_str)
-        if self.multi_list_view:
-            self.multi_list_view.controls.insert(0, log_item)
-            if len(self.multi_list_view.controls) > config.MAX_HISTORY_COUNT:
-                self.multi_list_view.controls.pop()
+        res = time.time() - runner['start_time']
+        self.multi_hold_runner = {'num': runner['num'], 'name': runner['name'], 'time': res}
+        self.multi_hold_expire_time = time.time() + MULTI_GOAL_DISPLAY_TIME
+        # 履歴へ追加
+        self.multi_history_list.controls.insert(0, ft.Text(f"#{runner['num']} Rider: {res:.3f}s", color="yellow", size=16))
+        if len(self.multi_history_list.controls) > MAX_HISTORY_COUNT: self.multi_history_list.controls.pop()
+        self.update_multi_ui()
 
-        # ゴール表示維持の設定
-        self.multi_hold_runner = runner
-        self.multi_hold_expire_time = time.time() + config.MULTI_GOAL_DISPLAY_TIME
-        
-        self.update_multi_ui_state()
-
-    def update_multi_ui_state(self):
+    def update_multi_ui(self):
         if not self.multi_main_time: return
-
-        display_runner = None
-        status_msg = "READY"
-        status_color = "grey"
-        time_val = "0.000"
-        time_color = "yellow"
-
-        # ゴール表示維持中かチェック
-        is_holding = False
-        if self.multi_hold_runner:
-            if time.time() < self.multi_hold_expire_time:
-                # 表示維持
-                display_runner = self.multi_hold_runner
-                status_msg = "FINISH"
-                status_color = "red"
-                time_val = f"{display_runner.get('result_time', 0):.3f}"
-                time_color = "red"
-                is_holding = True
-            else:
-                # 期限切れ -> クリア
-                self.multi_hold_runner = None
-
-        # 維持中でなければ、現在の先頭ランナーを表示
-        if not is_holding and self.active_runners:
-            display_runner = self.active_runners[0]
-            status_msg = f"RUNNING (#{display_runner['num']})"
-            status_color = "green"
-            # タイムはtimer_loopで更新される
-        
-        # 表示更新
-        if display_runner:
-            self.multi_main_name.value = f"#{display_runner['num']} {display_runner['name']}"
-            self.multi_main_status.value = status_msg
-            self.multi_main_status.color = status_color
-            if is_holding:
-                self.multi_main_time.value = time_val
-                self.multi_main_time.color = time_color
-        elif not self.active_runners:
-            # 誰もいない状態
+        now = time.time()
+        if self.multi_hold_runner and now < self.multi_hold_expire_time:
+            self.multi_main_name.value = f"#{self.multi_hold_runner['num']} FINISH"
+            self.multi_main_time.value = f"{self.multi_hold_runner['time']:.3f}"
+            self.multi_main_time.color = "red"
+        elif self.active_runners:
+            r = self.active_runners[0]
+            self.multi_main_name.value = f"#{r['num']} RUNNING"
+            self.multi_main_time.color = "yellow"
+        else:
             self.multi_main_name.value = "---"
             self.multi_main_time.value = "0.000"
-            self.multi_main_status.value = "WAITING ENTRY"
-            self.multi_main_status.color = "grey"
             self.multi_main_time.color = "grey"
-
-        # サブ情報の更新（後続ランナー）
-        if self.multi_queue_text:
-            others = []
-            start_index = 0
-            
-            # ゴール表示中でなければ、先頭(0)はメインに出ているので除外
-            if not is_holding and self.active_runners:
-                start_index = 1
-                
-            for r in self.active_runners[start_index:]:
-                others.append(f"#{r['num']} {r['name']}")
-            
-            if others:
-                self.multi_queue_text.value = "Following: " + ", ".join(others)
-            else:
-                self.multi_queue_text.value = "No other runners on course"
         
+        others = [f"#{r['num']}" for r in self.active_runners[1:]]
+        self.multi_queue_text.value = f"Following: {', '.join(others)}" if others else "No other runners"
         self.page.update()
 
-    def update_sensor_ui(self):
-        """センサー状態表示の更新"""
+    def handle_solo_signal(self):
         now = time.time()
-        
-        # START
-        if now - self.last_start_sensor_time < config.SENSOR_TIMEOUT:
-            # Containerの中身(Text)を更新するのではなく、Containerそのものの色を変える
-            # ただし、Containerのcontentにアクセスして値を変更する必要がある
-            # ui.create_sensor_status で作成された Container の content は Text
-            
-            # 以下の実装はUIパーツの参照方法に依存するため、
-            # ui_components.py の変更なしで動くようにプロパティ操作を行う
-            self.start_sensor_status.bgcolor = "green"
-            self.start_sensor_status.content.value = "START: OK"
-            
-            info = self.start_sensor_detail
-            if info["rssi"] is not None:
-                self.start_sensor_status.content.value += f"\n{info['rssi']}dBm"
+        if not self.solo_running:
+            self.solo_running = True
+            self.solo_start_time = now
+            self.solo_status_text.value = "RUNNING!"
+            self.solo_time_display.color = "green"
         else:
-            self.start_sensor_status.bgcolor = "grey800"
-            self.start_sensor_status.content.value = "START\n--"
-            
-        # STOP
-        if now - self.last_stop_sensor_time < config.SENSOR_TIMEOUT:
-            self.stop_sensor_status.bgcolor = "green"
-            self.stop_sensor_status.content.value = "GOAL: OK"
-            
-            info = self.stop_sensor_detail
-            if info["rssi"] is not None:
-                self.stop_sensor_status.content.value += f"\n{info['rssi']}dBm"
-        else:
-            self.stop_sensor_status.bgcolor = "grey800"
-            self.stop_sensor_status.content.value = "GOAL\n--"
+            if now - self.solo_start_time < MIN_LAP_TIME: return
+            self.solo_running = False
+            res = now - self.solo_start_time
+            self.solo_time_display.value = f"{res:.3f}"
+            self.solo_time_display.color = "red"
+            self.solo_status_text.value = "FINISH"
+        self.page.update()
 
     def timer_loop(self):
-        """画面更新ループ"""
         while self.running:
             try:
                 now = time.time()
-                
-                # SOLOモードのタイマー計算
-                if self.current_mode == "SOLO" and self.solo_running and self.solo_time_display:
+                # SOLOモードの更新
+                if self.current_mode == "SOLO" and self.solo_running:
                     self.solo_time_display.value = f"{now - self.solo_start_time:.3f}"
-                    self.page.update()
                 
-                # MULTIモードのタイマー計算
-                elif self.current_mode == "MULTI":
+                # MULTIモードの更新
+                if self.current_mode == "MULTI":
                     if self.multi_hold_runner and now > self.multi_hold_expire_time:
                         self.multi_hold_runner = None
-                        self.update_multi_ui_state()
-
                     if not self.multi_hold_runner and self.active_runners:
-                        target = self.active_runners[0]
-                        current_time = now - target['start_time']
-                        if self.multi_main_time:
-                            self.multi_main_time.value = f"{current_time:.3f}"
-                            self.multi_main_time.color = "yellow"
-                            self.page.update()
-                
-                # センサー状態更新
-                if self.page:
-                    self.update_sensor_ui()
-                    self.page.update()
+                        self.multi_main_time.value = f"{now - self.active_runners[0]['start_time']:.3f}"
+                    self.update_multi_ui()
 
-            except Exception:
-                pass
-            time.sleep(0.05)
+                # センサー表示更新
+                def up(c, t, l):
+                    if now - t < SENSOR_TIMEOUT:
+                        c.bgcolor = "green"
+                        c.content.value = f"{l}: OK"
+                    else:
+                        c.bgcolor = "grey800"
+                        c.content.value = f"{l}\n--"
+                up(self.start_sensor_status, self.last_start_sensor_time, "START")
+                up(self.stop_sensor_status, self.last_stop_sensor_time, "GOAL")
+                
+                if self.page: self.page.update()
+            except: pass
+            time.sleep(0.1)
 
 if __name__ == "__main__":
     app = GymkhanaApp()
