@@ -20,14 +20,14 @@ def create_wifi_info():
         content=ft.Row([
             ft.Text("SSID: motogym", color="white", weight="bold"),
             ft.Text("PASS: 12345678", color="white", weight="bold"),
-        ], alignment="center", spacing=20, wrap=True),
+        ], alignment=ft.MainAxisAlignment.CENTER, spacing=20, wrap=True),
         padding=10, bgcolor="grey900", border_radius=10
     )
 
 def create_sensor_status(label):
     return ft.Container(
-        content=ft.Text(f"{label}\n--", color="white", weight="bold", size=12, text_align="center"),
-        padding=5, border_radius=5, bgcolor="grey800", width=120, alignment=ft.alignment.center
+        content=ft.Text(f"{label}\n--", color="white", weight="bold", size=12, text_align=ft.TextAlign.CENTER),
+        padding=5, border_radius=5, bgcolor="grey800", width=120, alignment=ft.Alignment(0, 0)
     )
 
 class GymkhanaApp:
@@ -58,7 +58,7 @@ class GymkhanaApp:
         self.page = page
         page.title = "Gymkhana Timer"
         page.bgcolor = "#1a1a1a"
-        page.theme_mode = "dark"
+        page.theme_mode = ft.ThemeMode.DARK
         page.padding = 10
         page.scroll = ft.ScrollMode.AUTO
 
@@ -68,7 +68,7 @@ class GymkhanaApp:
             self.stop_sensor_status = create_sensor_status("GOAL")
             self.sensor_row = ft.Row(
                 [ft.Text("Sensor:", color="grey400"), self.start_sensor_status, self.stop_sensor_status],
-                alignment="center", spacing=10
+                alignment=ft.MainAxisAlignment.CENTER, spacing=10
             )
 
             # 通信とタイマーの開始
@@ -97,7 +97,7 @@ class GymkhanaApp:
                     ft.Icon(name=icon, size=40, color=color),
                     ft.Text(title, size=18, weight="bold", color=color),
                     ft.Text(subtitle, size=12, color="grey"),
-                ], alignment="center", horizontal_alignment="center"),
+                ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
                 padding=15, bgcolor="grey900", border_radius=10,
                 border=ft.Border(top=ft.BorderSide(1, color), bottom=ft.BorderSide(1, color), left=ft.BorderSide(1, color), right=ft.BorderSide(1, color)),
                 on_click=click_fn, ink=True
@@ -112,7 +112,7 @@ class GymkhanaApp:
             ft.Container(height=10),
             self.sensor_row,
             ft.Container(height=20),
-            ft.Text("モードを選択してください", size=14, color="white", text_align="center"),
+            ft.Text("モードを選択してください", size=14, color="white", text_align=ft.TextAlign.CENTER),
             ft.Container(height=10),
             btn_multi,
             ft.Container(height=10),
@@ -136,13 +136,13 @@ class GymkhanaApp:
             ft.Row([
                 ft.IconButton(icon="arrow_back", on_click=lambda _: self.show_mode_selection()),
                 ft.Text("MULTI MODE", size=20, weight="bold", color="cyan"),
-            ], alignment="spaceBetween"),
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
             self.sensor_row,
             ft.Container(
                 content=ft.Column([
                     self.multi_main_name, self.multi_main_time, self.multi_main_status
-                ], horizontal_alignment="center"),
-                padding=20, bgcolor="grey900", border_radius=15, alignment=ft.alignment.center,
+                ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=20, bgcolor="grey900", border_radius=15, alignment=ft.Alignment(0, 0),
                 border=ft.Border(top=ft.BorderSide(2, "grey800"), bottom=ft.BorderSide(2, "grey800"), left=ft.BorderSide(2, "grey800"), right=ft.BorderSide(2, "grey800"))
             ),
             ft.Text("ON COURSE:", size=12, color="cyan", weight="bold"),
@@ -165,15 +165,15 @@ class GymkhanaApp:
             ft.Row([
                 ft.IconButton(icon="arrow_back", on_click=lambda _: self.show_mode_selection()),
                 ft.Text("SOLO MODE", size=20, weight="bold", color="orange"),
-            ], alignment="spaceBetween"),
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
             self.sensor_row,
             ft.Container(height=40),
             ft.Column([
                 self.solo_status_text,
                 self.solo_time_display,
                 ft.Container(height=20),
-                ft.ElevatedButton("RESET", color="white", bgcolor="red900", on_click=lambda _: self.reset_solo())
-            ], horizontal_alignment="center")
+                ft.Button(content=ft.Text("RESET"), color="white", bgcolor="red900", on_click=lambda _: self.reset_solo())
+            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER)
         )
         self.page.update()
 
@@ -202,27 +202,27 @@ class GymkhanaApp:
             self.con_my.border = self._b("cyan" if t=="my" else "transparent")
             self.page.update()
 
-        self.con_top = ft.Container(self.txt_top, padding=10, bgcolor="grey900", border_radius=5, border=self._b("cyan"), on_click=lambda _: select("top"), width=150, height=60, alignment=ft.alignment.center_right)
-        self.con_ratio = ft.Container(self.txt_ratio, padding=10, bgcolor="grey900", border_radius=5, border=self._b("transparent"), on_click=lambda _: select("ratio"), width=100, height=60, alignment=ft.alignment.center_right)
-        self.con_my = ft.Container(self.txt_my, padding=10, bgcolor="grey900", border_radius=5, border=self._b("transparent"), on_click=lambda _: select("my"), width=150, height=60, alignment=ft.alignment.center_right)
+        self.con_top = ft.Container(self.txt_top, padding=10, bgcolor="grey900", border_radius=5, border=self._b("cyan"), on_click=lambda _: select("top"), width=150, height=60, alignment=ft.Alignment(1, 0))
+        self.con_ratio = ft.Container(self.txt_ratio, padding=10, bgcolor="grey900", border_radius=5, border=self._b("transparent"), on_click=lambda _: select("ratio"), width=100, height=60, alignment=ft.Alignment(1, 0))
+        self.con_my = ft.Container(self.txt_my, padding=10, bgcolor="grey900", border_radius=5, border=self._b("transparent"), on_click=lambda _: select("my"), width=150, height=60, alignment=ft.Alignment(1, 0))
 
         def k(val, col="grey800", w=80):
-            return ft.Container(ft.Text(val, size=20, weight="bold"), width=w, height=50, bgcolor=col, border_radius=8, alignment=ft.alignment.center, on_click=lambda _: self.on_key(val))
+            return ft.Container(ft.Text(val, size=20, weight="bold"), width=w, height=50, bgcolor=col, border_radius=8, alignment=ft.Alignment(0, 0), on_click=lambda _: self.on_key(val))
 
         keypad = ft.Column([
-            ft.Row([k("7"), k("8"), k("9")], alignment="center"),
-            ft.Row([k("4"), k("5"), k("6")], alignment="center"),
-            ft.Row([k("1"), k("2"), k("3")], alignment="center"),
-            ft.Row([k("C", "red900"), k("0"), k(".")], alignment="center"),
+            ft.Row([k("7"), k("8"), k("9")], alignment=ft.MainAxisAlignment.CENTER),
+            ft.Row([k("4"), k("5"), k("6")], alignment=ft.MainAxisAlignment.CENTER),
+            ft.Row([k("1"), k("2"), k("3")], alignment=ft.MainAxisAlignment.CENTER),
+            ft.Row([k("C", "red900"), k("0"), k(".")], alignment=ft.MainAxisAlignment.CENTER),
         ])
 
         self.page.add(
             ft.Row([ft.IconButton(icon="arrow_back", on_click=lambda _: self.show_mode_selection()), ft.Text("CALC", size=20, weight="bold", color="green")]),
-            ft.Row([ft.Text("Top:"), self.con_top], alignment="center"),
-            ft.Row([ft.Text("Ratio%:"), self.con_ratio, self.lbl_target], alignment="center"),
-            ft.Row([ft.Text("My:"), self.con_my], alignment="center"),
+            ft.Row([ft.Text("Top:"), self.con_top], alignment=ft.MainAxisAlignment.CENTER),
+            ft.Row([ft.Text("Ratio%:"), self.con_ratio, self.lbl_target], alignment=ft.MainAxisAlignment.CENTER),
+            ft.Row([ft.Text("My:"), self.con_my], alignment=ft.MainAxisAlignment.CENTER),
             ft.Divider(),
-            ft.Column([self.calc_result], horizontal_alignment="center"),
+            ft.Column([self.calc_result], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
             keypad
         )
         self.page.update()
@@ -313,7 +313,7 @@ class GymkhanaApp:
         
         others = [f"#{r['num']}" for r in self.active_runners[1:]]
         self.multi_queue_text.value = f"Following: {', '.join(others)}" if others else "No other runners"
-        self.page.update()
+        if self.page: self.page.update()
 
     def handle_solo_signal(self):
         now = time.time()
@@ -329,7 +329,7 @@ class GymkhanaApp:
             self.solo_time_display.value = f"{res:.3f}"
             self.solo_time_display.color = "red"
             self.solo_status_text.value = "FINISH"
-        self.page.update()
+        if self.page: self.page.update()
 
     def timer_loop(self):
         while self.running:
@@ -362,6 +362,9 @@ class GymkhanaApp:
             except: pass
             time.sleep(0.1)
 
-if __name__ == "__main__":
+def main(page: ft.Page):
     app = GymkhanaApp()
-    ft.app(target=app.main)
+    app.main(page)
+
+if __name__ == "__main__":
+    ft.app(target=main)
