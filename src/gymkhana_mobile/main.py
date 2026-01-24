@@ -18,7 +18,7 @@ def create_wifi_info():
     return ft.Container(
         content=ft.Row([
             ft.Text("SSID: motogym", color="white", weight="bold"),
-            ft.Text("PASS: 12345678", color="white", weight="bold"),
+            ft.Text("PASS: password123", color="white", weight="bold"),
         ], alignment="center", spacing=20, wrap=True),
         padding=10, bgcolor="grey900", border_radius=10
     )
@@ -220,7 +220,7 @@ class GymkhanaApp:
         self.page.clean()
 
         self.tf_top = ft.TextField(label="Top Time (sec)", keyboard_type="number", color="yellow", on_change=self.on_calc_update)
-        self.tf_ratio = ft.TextField(label="Target Ratio (%)", value="105", keyboard_type="number", color="cyan", on_change=self.on_calc_update)
+        self.tf_ratio = ft.TextField(label="Target Ratio (%)", value="100", keyboard_type="number", color="cyan", on_change=self.on_calc_update)
         self.tf_my = ft.TextField(label="Your Time (sec)", keyboard_type="number", color="white", on_change=self.on_calc_update)
         
         self.lbl_calc_target = ft.Text("Target Time: 0.000", color="grey500", size=18, weight="bold")
