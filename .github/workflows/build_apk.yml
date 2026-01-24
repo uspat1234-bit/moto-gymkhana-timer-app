@@ -44,7 +44,7 @@ jobs:
           if [ -d "src/gymkhana_mobile" ]; then
             cd src/gymkhana_mobile
           fi
-          # v0.28.3 では --yes オプションは不要（存在しない）ため削除
+          # v0.28.3 では --yes オプションは不要（存在しない）ため削除して実行します
           flet build apk --verbose
           
       - name: Upload APK Artifact
