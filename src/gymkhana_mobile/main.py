@@ -14,21 +14,22 @@ MAX_HISTORY_COUNT = 20
 MULTI_GOAL_DISPLAY_TIME = 3.0
 
 def create_wifi_info():
-    """Wi-Fi情報表示ヘッダー (文字列指定でエラー回避)"""
+    """Wi-Fi情報表示ヘッダー (互換性の高い文字列指定)"""
     return ft.Container(
         content=ft.Row([
             ft.Text("SSID: motogym", color="white", weight="bold"),
-            ft.Text("PASS: 12345678", color="white", weight="bold"),
+            ft.Text("PASS: pass123", color="white", weight="bold"),
         ], alignment=ft.MainAxisAlignment.CENTER, spacing=20, wrap=True),
         padding=10, bgcolor="grey900", border_radius=10
     )
 
 def create_sensor_status(label):
-    """センサー状態表示用ボックス (Alignmentクラスを明示)"""
+    """センサー状態表示用ボックス (エラー修正: Alignmentクラスを明示)"""
     return ft.Container(
         content=ft.Text(f"{label}\n--", color="white", weight="bold", size=12, text_align=ft.TextAlign.CENTER),
         padding=5, border_radius=5, bgcolor="grey800", width=120,
-        alignment=ft.Alignment(0, 0) # ft.alignment.center 廃止への対応
+        # 修正: ft.alignment.center の廃止に対応
+        alignment=ft.Alignment(0, 0)
     )
 
 class GymkhanaApp:
@@ -42,21 +43,14 @@ class GymkhanaApp:
         self.stop_sensor_detail = {"rssi": None}
         
         self.current_mode = None 
-        
-        # SOLOモード用
         self.solo_running = False
         self.solo_start_time = 0.0
-        
-        # MULTIモード用
         self.active_runners = [] 
         self.history_count = 0
         self.multi_hold_runner = None 
         self.multi_hold_expire_time = 0.0
         
-        # 計算機用
-        self.calc_target = "top" 
-        
-        # UI参照（スレッドからの安全なアクセスのため）
+        # UI参照
         self.start_sensor_status = None
         self.stop_sensor_status = None
         self.solo_time_display = None
@@ -76,7 +70,7 @@ class GymkhanaApp:
         page.scroll = ft.ScrollMode.AUTO
 
         try:
-            # センサー表示UIの初期化
+            # UI初期化
             self.start_sensor_status = create_sensor_status("START")
             self.stop_sensor_status = create_sensor_status("GOAL")
             self.sensor_row = ft.Row(
@@ -84,7 +78,7 @@ class GymkhanaApp:
                 alignment=ft.MainAxisAlignment.CENTER, spacing=10
             )
 
-            # 通信とタイマーの開始
+            # 別スレッドでUDP監視と表示更新を開始
             threading.Thread(target=self.udp_listener, daemon=True).start()
             threading.Thread(target=self.timer_loop, daemon=True).start()
 
@@ -112,7 +106,7 @@ class GymkhanaApp:
         def create_btn(icon_str, title, subtitle, color, click_fn):
             return ft.Container(
                 content=ft.Column([
-                    # 第一引数に直接アイコン名を指定 (name= キーワードを避ける)
+                    # 修正: name= キーワードを避け、第一引数に直接指定
                     ft.Icon(icon_str, size=40, color=color),
                     ft.Text(title, size=18, weight="bold", color=color),
                     ft.Text(subtitle, size=12, color="grey"),
@@ -122,12 +116,10 @@ class GymkhanaApp:
                     top=ft.BorderSide(1, color), bottom=ft.BorderSide(1, color),
                     left=ft.BorderSide(1, color), right=ft.BorderSide(1, color)
                 ),
+                # 修正: ボタンが巨大にならないよう制約を追加
+                width=340,
                 on_click=click_fn, ink=True
             )
-
-        btn_multi = create_btn("people", "MULTI MODE", "複数人追走 (2センサー)", "cyan", lambda _: self.show_multi_mode())
-        btn_solo = create_btn("timer", "SOLO MODE", "単独計測 (1センサー)", "orange", lambda _: self.show_solo_mode())
-        btn_calc = create_btn("calculate", "TIME CALC", "タイム比計算機", "green", lambda _: self.show_calc_mode())
 
         self.page.add(
             create_wifi_info(),
@@ -136,11 +128,11 @@ class GymkhanaApp:
             ft.Container(height=20),
             ft.Text("モードを選択してください", size=14, color="white", text_align=ft.TextAlign.CENTER),
             ft.Container(height=10),
-            btn_multi,
-            ft.Container(height=10),
-            btn_solo,
-            ft.Container(height=10),
-            btn_calc
+            ft.Column([
+                create_btn("people", "MULTI MODE", "複数人追走 (2センサー)", "cyan", lambda _: self.show_multi_mode()),
+                create_btn("timer", "SOLO MODE", "単独計測 (1センサー)", "orange", lambda _: self.show_solo_mode()),
+                create_btn("calculate", "TIME CALC", "タイム比計算機", "green", lambda _: self.show_calc_mode())
+            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10)
         )
         self.page.update()
 
@@ -254,7 +246,6 @@ class GymkhanaApp:
         self.page.update()
 
     def on_calc_update(self, e):
-        """入力が変更されたら即座に再計算"""
         try:
             top = float(self.tf_top.value) if self.tf_top.value else 0
             ratio = float(self.tf_ratio.value) if self.tf_ratio.value else 0
@@ -398,5 +389,4 @@ def main_launcher(page: ft.Page):
     app.main(page)
 
 if __name__ == "__main__":
-    # 最新版 Flet 推奨の起動方法 (APKビルド時にも安定)
     ft.app(target=main_launcher)
