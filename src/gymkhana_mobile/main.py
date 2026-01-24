@@ -5,7 +5,7 @@ import threading
 import time
 import traceback
 
-# --- 設定値 ---
+# --- 設定値 (数値と文字列で定義) ---
 UDP_PORT = 5005
 BUFFER_SIZE = 1024
 SENSOR_TIMEOUT = 5.0
@@ -14,22 +14,25 @@ MAX_HISTORY_COUNT = 20
 MULTI_GOAL_DISPLAY_TIME = 3.0
 
 def create_wifi_info():
-    """Wi-Fi情報表示ヘッダー (互換性の高い文字列指定)"""
+    """Wi-Fi情報表示ヘッダー (文字列による色指定)"""
     return ft.Container(
         content=ft.Row([
-            ft.Text("SSID: motogym", color="white", weight="bold"),
-            ft.Text("PASS: pass123", color="white", weight="bold"),
+            ft.Text("SSID: motogym", color="white", weight=ft.FontWeight.BOLD),
+            ft.Text("PASS: password123", color="white", weight=ft.FontWeight.BOLD),
         ], alignment=ft.MainAxisAlignment.CENTER, spacing=20, wrap=True),
         padding=10, bgcolor="grey900", border_radius=10
     )
 
 def create_sensor_status(label):
-    """センサー状態表示用ボックス (エラー修正: Alignmentクラスを明示)"""
+    """
+    センサー状態表示用ボックス
+    ft.alignment.center などのプロパティを避け、ft.Alignment(x, y) クラスを明示的に使用。
+    これにより、バージョンアップによるプロパティ削除の影響を受けません。
+    """
     return ft.Container(
-        content=ft.Text(f"{label}\n--", color="white", weight="bold", size=12, text_align=ft.TextAlign.CENTER),
+        content=ft.Text(f"{label}\n--", color="white", weight=ft.FontWeight.BOLD, size=12, text_align=ft.TextAlign.CENTER),
         padding=5, border_radius=5, bgcolor="grey800", width=120,
-        # 修正: ft.alignment.center の廃止に対応
-        alignment=ft.Alignment(0, 0)
+        alignment=ft.Alignment(0, 0) # 0,0 は物理的な中央指定
     )
 
 class GymkhanaApp:
@@ -50,21 +53,14 @@ class GymkhanaApp:
         self.multi_hold_runner = None 
         self.multi_hold_expire_time = 0.0
         
-        # UI参照
+        # UI参照（スレッドからの安全な更新用）
         self.start_sensor_status = None
         self.stop_sensor_status = None
-        self.solo_time_display = None
-        self.solo_status_text = None
-        self.multi_main_time = None
-        self.multi_main_name = None
-        self.multi_main_status = None
-        self.multi_history_list = None
-        self.multi_queue_text = None
 
     def main(self, page: ft.Page):
         self.page = page
         page.title = "Gymkhana Timer"
-        page.bgcolor = "#1a1a1a"
+        page.bgcolor = "#1a1a1a" # 色コードでの明示的な指定
         page.theme_mode = ft.ThemeMode.DARK
         page.padding = 10
         page.scroll = ft.ScrollMode.AUTO
@@ -74,51 +70,61 @@ class GymkhanaApp:
             self.start_sensor_status = create_sensor_status("START")
             self.stop_sensor_status = create_sensor_status("GOAL")
             self.sensor_row = ft.Row(
-                [ft.Text("Sensor:", color="grey400"), self.start_sensor_status, self.stop_sensor_status],
+                [
+                    ft.Text("Sensor:", color="grey400", size=12), 
+                    self.start_sensor_status, 
+                    self.stop_sensor_status
+                ],
                 alignment=ft.MainAxisAlignment.CENTER, spacing=10
             )
 
-            # 別スレッドでUDP監視と表示更新を開始
+            # バックグラウンドスレッドの開始
             threading.Thread(target=self.udp_listener, daemon=True).start()
             threading.Thread(target=self.timer_loop, daemon=True).start()
 
             self.show_mode_selection()
         except Exception as e:
-            self.show_error(e)
+            self.show_error_screen(e)
 
-    def show_error(self, e):
-        """例外発生時に赤い画面を出す"""
+    def show_error_screen(self, e):
+        """UI構築中にエラーが出た場合のセーフガード画面"""
         if self.page:
             self.page.clean()
             self.page.add(
-                ft.Text("⚠️ Fatal UI Error", color="red", size=24, weight="bold"),
-                ft.Text(f"エラー内容: {e}", color="white", size=16),
-                ft.Divider(),
-                ft.Text(traceback.format_exc(), color="red400", font_family="monospace", size=10),
-                ft.Button(content=ft.Text("Retry / Reload"), on_click=lambda _: self.show_mode_selection())
+                ft.Text("⚠️ 描画エラーが発生しました", color="red", size=24, weight="bold"),
+                ft.Text(f"Error: {str(e)}", color="white"),
+                ft.Divider(color="grey800"),
+                ft.Text(traceback.format_exc(), color="red400", size=10, font_family="monospace"),
+                ft.Button(content=ft.Text("メニューを再読み込み"), on_click=lambda _: self.show_mode_selection())
             )
             self.page.update()
 
     def show_mode_selection(self):
+        """モード選択メインメニュー"""
         self.current_mode = None
         self.page.clean()
         
-        def create_btn(icon_str, title, subtitle, color, click_fn):
+        def create_btn(icon_str, title, subtitle, color_name, click_fn):
+            """
+            ボタン作成ヘルパー。
+            ft.Icon(name=...) という書き方は Flet 0.80+ でエラーになるケースがあるため、
+            第一引数に直接指定する形式に徹底。
+            """
             return ft.Container(
                 content=ft.Column([
-                    # 修正: name= キーワードを避け、第一引数に直接指定
-                    ft.Icon(icon_str, size=40, color=color),
-                    ft.Text(title, size=18, weight="bold", color=color),
-                    ft.Text(subtitle, size=12, color="grey"),
+                    ft.Icon(icon_str, size=40, color=color_name),
+                    ft.Text(title, size=18, weight=ft.FontWeight.BOLD, color=color_name),
+                    ft.Text(subtitle, size=12, color="grey500"),
                 ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-                padding=15, bgcolor="grey900", border_radius=10,
+                padding=15, bgcolor="grey900", border_radius=12,
+                # Borderの指定も一括関数を使わず、各辺を明示的に定義
                 border=ft.Border(
-                    top=ft.BorderSide(1, color), bottom=ft.BorderSide(1, color),
-                    left=ft.BorderSide(1, color), right=ft.BorderSide(1, color)
+                    top=ft.BorderSide(1, color_name),
+                    bottom=ft.BorderSide(1, color_name),
+                    left=ft.BorderSide(1, color_name),
+                    right=ft.BorderSide(1, color_name)
                 ),
-                # 修正: ボタンが巨大にならないよう制約を追加
-                width=340,
-                on_click=click_fn, ink=True
+                width=340, on_click=click_fn, ink=True
             )
 
         self.page.add(
@@ -129,40 +135,41 @@ class GymkhanaApp:
             ft.Text("モードを選択してください", size=14, color="white", text_align=ft.TextAlign.CENTER),
             ft.Container(height=10),
             ft.Column([
-                create_btn("people", "MULTI MODE", "複数人追走 (2センサー)", "cyan", lambda _: self.show_multi_mode()),
-                create_btn("timer", "SOLO MODE", "単独計測 (1センサー)", "orange", lambda _: self.show_solo_mode()),
-                create_btn("calculate", "TIME CALC", "タイム比計算機", "green", lambda _: self.show_calc_mode())
-            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10)
+                create_btn("people", "MULTI MODE", "複数人追走計測 (2センサー)", "cyan", lambda _: self.show_multi_mode()),
+                create_btn("timer", "SOLO MODE", "単独練習計測 (1センサー)", "orange", lambda _: self.show_solo_mode()),
+                create_btn("calculate", "TIME CALC", "タイム比計算機 (フリック入力)", "green", lambda _: self.show_calc_mode())
+            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=15)
         )
         self.page.update()
 
-    # --- 各モード表示ロジック ---
+    # --- 各モードの構築 ---
+
     def show_multi_mode(self):
         self.current_mode = "MULTI"
         self.page.clean()
-        self.multi_main_time = ft.Text("0.000", size=60, color="yellow", weight="bold", font_family="monospace")
-        self.multi_main_name = ft.Text("---", size=24, color="white", weight="bold")
-        self.multi_main_status = ft.Text("READY", size=16, color="grey")
+        self.multi_main_time = ft.Text("0.000", size=60, color="yellow", weight=ft.FontWeight.BOLD, font_family="monospace")
+        self.multi_main_name = ft.Text("---", size=24, color="white", weight=ft.FontWeight.BOLD)
+        self.multi_main_status = ft.Text("READY", size=16, color="grey500")
         self.multi_history_list = ft.ListView(expand=True, spacing=5, height=300)
-        self.multi_queue_text = ft.Text("No other runners", color="grey", size=12)
+        self.multi_queue_text = ft.Text("No other runners", color="grey500", size=12)
 
         self.page.add(
             ft.Row([
-                ft.IconButton(icon="arrow_back", icon_color="white", on_click=lambda _: self.show_mode_selection()),
-                ft.Text("MULTI MODE", size=20, weight="bold", color="cyan"),
+                ft.IconButton(icon=ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: self.show_mode_selection()),
+                ft.Text("MULTI MODE", size=20, weight=ft.FontWeight.BOLD, color="cyan"),
             ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
             self.sensor_row,
             ft.Container(
                 content=ft.Column([
                     self.multi_main_name, self.multi_main_time, self.multi_main_status
                 ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-                padding=20, bgcolor="grey900", border_radius=15, alignment=ft.Alignment(0, 0),
+                padding=25, bgcolor="grey900", border_radius=15, alignment=ft.Alignment(0, 0),
                 border=ft.Border(
                     top=ft.BorderSide(2, "grey800"), bottom=ft.BorderSide(2, "grey800"),
                     left=ft.BorderSide(2, "grey800"), right=ft.BorderSide(2, "grey800")
                 )
             ),
-            ft.Text("ON COURSE:", size=12, color="cyan", weight="bold"),
+            ft.Text("ON COURSE:", size=12, color="cyan", weight=ft.FontWeight.BOLD),
             self.multi_queue_text,
             ft.Divider(color="grey800"),
             ft.Text("HISTORY:", size=12, color="white"),
@@ -174,27 +181,30 @@ class GymkhanaApp:
         self.current_mode = "SOLO"
         self.solo_running = False
         self.page.clean()
-        self.solo_time_display = ft.Text("0.000", size=80, color="yellow", weight="bold", font_family="monospace")
-        self.solo_status_text = ft.Text("READY", size=20, color="grey")
+        self.solo_time_display = ft.Text("0.000", size=80, color="yellow", weight=ft.FontWeight.BOLD, font_family="monospace")
+        self.solo_status_text = ft.Text("READY", size=20, color="grey500")
 
         self.page.add(
             ft.Row([
-                ft.IconButton(icon="arrow_back", icon_color="white", on_click=lambda _: self.show_mode_selection()),
-                ft.Text("SOLO MODE", size=20, weight="bold", color="orange"),
+                ft.IconButton(icon=ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: self.show_mode_selection()),
+                ft.Text("SOLO MODE", size=20, weight=ft.FontWeight.BOLD, color="orange"),
             ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
             self.sensor_row,
             ft.Container(height=40),
             ft.Column([
                 self.solo_status_text,
                 self.solo_time_display,
-                ft.Container(height=20),
-                ft.Button(content=ft.Text("RESET"), color="white", bgcolor="red900", on_click=lambda _: self.reset_solo())
+                ft.Container(height=30),
+                ft.Button(
+                    content=ft.Text("RESET TIMER"), color="white", bgcolor="red900", 
+                    on_click=lambda _: self.reset_solo()
+                )
             ], horizontal_alignment=ft.CrossAxisAlignment.CENTER)
         )
         self.page.update()
 
     def show_calc_mode(self):
-        """タイム計算機画面 (TextField方式: フリック入力対応)"""
+        """タイム計算機 (TextField を使用して標準キーボードのフリック入力に対応)"""
         self.current_mode = "CALC"
         self.page.clean()
         
@@ -212,31 +222,28 @@ class GymkhanaApp:
             on_change=self.on_calc_update
         )
         self.tf_my = ft.TextField(
-            label="Your Time (秒)", 
+            label="自分のタイム (秒)", 
             keyboard_type=ft.KeyboardType.NUMBER, 
             color="white", 
             on_change=self.on_calc_update
         )
         
-        self.lbl_target = ft.Text("Target: 0.000", color="grey", size=18, weight="bold")
-        self.calc_result = ft.Text("0.00 %", size=50, weight="bold", color="green")
+        self.lbl_target = ft.Text("目標タイム: 0.000", color="grey500", size=18, weight=ft.FontWeight.BOLD)
+        self.calc_result = ft.Text("--- %", size=50, weight=ft.FontWeight.BOLD, color="green")
 
         self.page.add(
             ft.Row([
-                ft.IconButton(icon="arrow_back", icon_color="white", on_click=lambda _: self.show_mode_selection()),
-                ft.Text("TIME CALC", size=20, weight="bold", color="green")
+                ft.IconButton(icon=ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: self.show_mode_selection()),
+                ft.Text("TIME CALCULATOR", size=20, weight=ft.FontWeight.BOLD, color="green")
             ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
             ft.Column([
                 self.tf_top,
-                ft.Row([
-                    ft.Container(self.tf_ratio, expand=True),
-                    ft.Container(self.lbl_target, padding=10)
-                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                ft.Row([ft.Container(self.tf_ratio, expand=True), ft.Container(self.lbl_target, padding=10)]),
                 self.tf_my,
-                ft.Divider(),
+                ft.Divider(color="grey800"),
                 ft.Container(
                     content=ft.Column([
-                        ft.Text("現在のタイム比", size=12, color="grey"),
+                        ft.Text("現在のタイム比", size=12, color="grey500"),
                         self.calc_result
                     ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
                     alignment=ft.Alignment(0, 0)
@@ -246,32 +253,28 @@ class GymkhanaApp:
         self.page.update()
 
     def on_calc_update(self, e):
+        """TextFieldの値が変更されるたびに再計算"""
         try:
             top = float(self.tf_top.value) if self.tf_top.value else 0
             ratio = float(self.tf_ratio.value) if self.tf_ratio.value else 0
             my = float(self.tf_my.value) if self.tf_my.value else 0
-            
-            if top > 0 and ratio > 0:
-                self.lbl_target.value = f"Target: {top / (ratio/100):.3f}"
-            
+            if top > 0 and ratio > 0: self.lbl_target.value = f"目標タイム: {top / (ratio/100):.3f}"
             if top > 0 and my > 0:
                 res = (my / top) * 100
                 self.calc_result.value = f"{res:.2f} %"
                 self.calc_result.color = "green" if res < 105 else ("yellow" if res < 110 else "red")
             else:
-                self.calc_result.value = "0.00 %"
-                self.calc_result.color = "grey"
-        except:
-            pass
-        if self.page:
-            self.page.update()
+                self.calc_result.value = "--- %"
+                self.calc_result.color = "grey500"
+        except: pass
+        if self.page: self.page.update()
 
-    # --- 共通ロジック ---
+    # --- 通信とロジック ---
+
     def reset_solo(self):
         self.solo_running = False
         if self.solo_time_display:
-            self.solo_time_display.value = "0.000"
-            self.solo_time_display.color = "yellow"
+            self.solo_time_display.value = "0.000"; self.solo_time_display.color = "yellow"
         if self.solo_status_text:
             self.solo_status_text.value = "RESET"
         self.page.update()
@@ -314,7 +317,7 @@ class GymkhanaApp:
         self.multi_hold_runner = {'num': runner['num'], 'time': res}
         self.multi_hold_expire_time = time.time() + MULTI_GOAL_DISPLAY_TIME
         if self.multi_history_list:
-            self.multi_history_list.controls.insert(0, ft.Text(f"#{runner['num']} Result: {res:.3f}s", color="yellow"))
+            self.multi_history_list.controls.insert(0, ft.Text(f"#{runner['num']} Result: {res:.3f}s", color="yellow", size=16, weight=ft.FontWeight.BOLD))
             if len(self.multi_history_list.controls) > MAX_HISTORY_COUNT: self.multi_history_list.controls.pop()
         self.update_multi_ui()
 
@@ -323,23 +326,16 @@ class GymkhanaApp:
         now = time.time()
         if self.multi_hold_runner and now < self.multi_hold_expire_time:
             self.multi_main_name.value = f"#{self.multi_hold_runner['num']} FINISH"
-            self.multi_main_time.value = f"{self.multi_hold_runner['time']:.3f}"
-            self.multi_main_time.color = "red"
-            if self.multi_main_status: self.multi_main_status.value = "FINISHED"
+            self.multi_main_time.value = f"{self.multi_hold_runner['time']:.3f}"; self.multi_main_time.color = "red"
         elif self.active_runners:
             r = self.active_runners[0]
-            self.multi_main_name.value = f"#{r['num']} RUNNING"
-            self.multi_main_time.color = "yellow"
-            if self.multi_main_status: self.multi_main_status.value = f"RUNNING (#{r['num']})"
+            self.multi_main_name.value = f"#{r['num']} RUNNING"; self.multi_main_time.color = "yellow"
         else:
-            self.multi_main_name.value = "---"
-            self.multi_main_time.value = "0.000"
-            self.multi_main_time.color = "grey"
-            if self.multi_main_status: self.multi_main_status.value = "READY"
+            self.multi_main_name.value = "---"; self.multi_main_time.value = "0.000"; self.multi_main_time.color = "grey500"
         
         if self.multi_queue_text:
             others = [f"#{r['num']}" for r in self.active_runners[1:]]
-            self.multi_queue_text.value = f"Following: {', '.join(others)}" if others else "No other runners"
+            self.multi_queue_text.value = f"On Course: {', '.join(others)}" if others else "No other runners"
         if self.page: self.page.update()
 
     def handle_solo_signal(self):
@@ -352,8 +348,7 @@ class GymkhanaApp:
             if now - self.solo_start_time < MIN_LAP_TIME: return
             self.solo_running = False; res = now - self.solo_start_time
             if self.solo_time_display: 
-                self.solo_time_display.value = f"{res:.3f}"
-                self.solo_time_display.color = "red"
+                self.solo_time_display.value = f"{res:.3f}"; self.solo_time_display.color = "red"
             if self.solo_status_text: self.solo_status_text.value = "FINISH"
         if self.page: self.page.update()
 
@@ -363,7 +358,6 @@ class GymkhanaApp:
                 now = time.time()
                 if self.current_mode == "SOLO" and self.solo_running and self.solo_time_display:
                     self.solo_time_display.value = f"{now - self.solo_start_time:.3f}"
-                
                 if self.current_mode == "MULTI":
                     if self.multi_hold_runner and now > self.multi_hold_expire_time: self.multi_hold_runner = None
                     if not self.multi_hold_runner and self.active_runners and self.multi_main_time:
@@ -373,20 +367,20 @@ class GymkhanaApp:
                 def up(c, t, l):
                     if not c: return
                     if now - t < SENSOR_TIMEOUT:
-                        c.bgcolor = "green"; c.content.value = f"{l}: OK"
+                        c.bgcolor = "green"; c.content.value = f"{l}: ONLINE"
                     else:
-                        c.bgcolor = "grey800"; c.content.value = f"{l}\n--"
-                
+                        c.bgcolor = "grey800"; c.content.value = f"{l}\nOFFLINE"
                 up(self.start_sensor_status, self.last_start_sensor_time, "START")
                 up(self.stop_sensor_status, self.last_stop_sensor_time, "GOAL")
-                
                 if self.page: self.page.update()
             except: pass
             time.sleep(0.1)
 
 def main_launcher(page: ft.Page):
+    """ビルド環境のバージョン食い違いを防ぐための明示的な初期化関数"""
     app = GymkhanaApp()
     app.main(page)
 
 if __name__ == "__main__":
+    # 最新版 Flet 推奨の起動方法 (APKビルド時に安定)
     ft.app(target=main_launcher)
