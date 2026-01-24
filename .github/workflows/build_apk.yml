@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Android APK (Flet v0.28.3)
 
 on:
   push:
@@ -25,14 +25,13 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install flet
-          # 依存関係がある場合はインストール
+          # ★ PC環境と完全に一致させるため、Fletのバージョンを 0.28.3 に固定します
+          pip install flet==0.28.3
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          # Fletの要求に合わせて少し新しめのバージョンを指定
           flutter-version: '3.29.2'
           channel: 'stable'
 
@@ -41,48 +40,23 @@ jobs:
 
       - name: Build APK
         run: |
-          # 1. アプリのソースコードがあるフォルダへ確実に移動
+          # アプリのソースコードがあるディレクトリへ移動
           if [ -d "src/gymkhana_mobile" ]; then
             cd src/gymkhana_mobile
-            echo "📂 Working directory: $(pwd)"
-          else
-            echo "❌ src/gymkhana_mobile not found!"
-            exit 1
           fi
-
-          # 2. main.py が存在することを確認 (Fletビルドのデフォルト)
-          if [ ! -f "main.py" ]; then
-            if [ -f "app.py" ]; then
-              mv app.py main.py
-              echo "🔄 Renamed app.py to main.py"
-            else
-              echo "❌ main.py or app.py not found in $(pwd)"
-              ls -l
-              exit 1
-            fi
-          fi
-
-          # 3. 構成ファイルのリストを表示 (デバッグ用)
-          echo "📦 Current files for packaging:"
-          ls -F
-
-          # 4. ビルド実行
-          # 修正ポイント: --yes フラグを追加して対話型プロンプトを回避
-          # これにより、SDKのインストール確認などで止まることなくビルドが進みます
+          # ビルド実行
           flet build apk --verbose --yes
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-release.apk
-          # すべてのサブディレクトリからapkを探してアップロード
           path: "**/build/apk/*.apk"
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          # リリースには完成したAPKのみを添付
           files: "**/build/apk/app-release.apk"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
